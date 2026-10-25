@@ -95,6 +95,7 @@ for (const board of boards) {
     for (let repeat = 1; repeat <= 5; repeat += 1) {
       const result = runProgram(board, ["-b", board.board, fixture]);
       assert.equal(result.exitCode, 0, result.output);
+      assert.doesNotMatch(result.output, /\bFAIL\b/i);
       assert.deepEqual(Buffer.from(result.sram, "base64"), expected);
       measured("sram", variant, board.name, repeat, result);
     }
@@ -104,6 +105,7 @@ for (const board of boards) {
     for (let repeat = 1; repeat <= 5; repeat += 1) {
       const result = runProgram(board, ["-b", board.board, "-f", fixture]);
       assert.equal(result.exitCode, 0, result.output);
+      assert.doesNotMatch(result.output, /\bFAIL\b/i);
       if (board.idcode === 0x0000081b) {
         assert.ok(result.spiCommandCounts[6] > 0, "SPI write-enable was not exercised");
         assert.ok(result.spiCommandCounts[5] > 0, "SPI status polling was not exercised");
