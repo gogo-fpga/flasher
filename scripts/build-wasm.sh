@@ -323,4 +323,9 @@ fi
 
 cp "$openfpgaloader_build/openFPGALoader.mjs" "$out/openFPGALoader.mjs"
 cp "$openfpgaloader_build/openFPGALoader.wasm" "$out/openFPGALoader.wasm"
+python3 "$root/scripts/build-info.py" write \
+  --root "$root" \
+  --artifacts "$out" \
+  --variant "$variant_id" \
+  --async-mode "$async_mode"
 printf 'elapsed_seconds=%s\n' "$SECONDS"
