@@ -134,9 +134,7 @@ class GowinTap {
       reversed = ((reversed & 0x33) << 2) | ((reversed >>> 2) & 0x33);
       reversed = ((reversed & 0x0f) << 4) | ((reversed >>> 4) & 0x0f);
       raw[index] = (raw[index] & 1) | ((reversed << 1) & 0xfe);
-      // Gowin::spi_wait reads the final status bit from the seven-bit MPSSE tail.
-      const carryOffset = input[0] === 0x05 ? 6 : 0;
-      raw[index + 1] |= (reversed >>> 7) << carryOffset;
+      raw[index + 1] |= reversed >>> 7;
     }
     this.spiOutputBits = [];
     for (const byte of raw) {
@@ -531,7 +529,7 @@ class FakeUSBDevice {
         const tdo = this.tap.clock(0, tdi);
         if (hasRead) {
           const outputBit = bitMode ? bit : bit % 8;
-          const outputIndex = bitMode ? 7 - outputBit : (lsbFirst ? outputBit : 7 - outputBit);
+          const outputIndex = bitMode ? bit + 1 : (lsbFirst ? outputBit : 7 - outputBit);
           received[byteIndex] |= tdo << outputIndex;
         }
       }
