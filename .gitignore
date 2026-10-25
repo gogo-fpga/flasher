@@ -1,5 +1,8 @@
 /build/
+/dist/
 /node_modules/
+/playwright-report/
+/test-results/
 /.yomiyasu/
 /AGENTS.override.md
 /CLAUDE.local.md
