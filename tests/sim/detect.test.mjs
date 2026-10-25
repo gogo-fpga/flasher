@@ -28,16 +28,21 @@ for (const variant of variants) {
   }
 }
 const boards = [
-  { name: "Tang Nano 1K", board: "tangnano1k", idcode: 0x0100681b, family: /GW1N/ },
-  { name: "Tang Nano 4K", board: "tangnano4k", idcode: 0x0100981b, family: /GW1N/ },
+  { name: "Tang Nano 1K", board: "tangnano1k", idcode: 0x0100681b, part: /GW1NZ-1/ },
+  { name: "Tang Nano 4K", board: "tangnano4k", idcode: 0x0100981b, part: /GW1NSR-4C/ },
   {
     name: "Tang Nano 9K",
     board: "tangnano9k",
     idcode: 0x1100481b,
     detectedIdcode: 0x0100481b,
-    family: /GW1N/,
+    part: /GW1N\(R\)-9C/,
   },
-  { name: "Tang Nano 20K", board: "tangnano20k", idcode: 0x0000081b, family: /GW2A/ },
+  {
+    name: "Tang Nano 20K",
+    board: "tangnano20k",
+    idcode: 0x0000081b,
+    part: /GW2A\(R\)-18\(C\)/,
+  },
 ];
 
 function runDetect(variant, idcode, args = ["--detect"], connected = true) {
@@ -82,7 +87,7 @@ for (const variant of variants) {
         }
         const idcode = (board.detectedIdcode ?? board.idcode).toString(16).replace(/^0+/, "");
         assert.match(result.output, new RegExp(`0x0*${idcode}`, "i"));
-        assert.match(result.output, board.family);
+        assert.match(result.output, board.part);
         console.log(
           `MEASURE,${variant},${board.name},${repeat},${result.elapsedMs.toFixed(3)},${board.idcode.toString(16)}`,
         );
@@ -98,7 +103,7 @@ for (const variant of variants) {
         }
         const idcode = (board.detectedIdcode ?? board.idcode).toString(16).replace(/^0+/, "");
         assert.match(result.output, new RegExp(`0x0*${idcode}`, "i"));
-        assert.match(result.output, board.family);
+        assert.match(result.output, board.part);
         console.log(
           `MEASURE,${variant},${board.board} --detect,${repeat},${result.elapsedMs.toFixed(3)},${board.idcode.toString(16)}`,
         );
