@@ -96,8 +96,7 @@ function confirmIdcodeMismatch(board, fileIdcode) {
       : `（生の値 ${formatIdcode(fileIdcode)}）`;
   idcodeWarning.textContent =
     `${board.label} の IDCODE ${formatIdcode(boardIdcode)} と、` +
-    `ファイルの IDCODE ${formatIdcode(maskedFileIdcode)} は一致しません。` +
-    rawValue;
+    `ファイルの IDCODE ${formatIdcode(maskedFileIdcode)}${rawValue}は一致しません。`;
   idcodeDialog.returnValue = "cancel";
   return new Promise((resolve) => {
     const controller = new AbortController();
