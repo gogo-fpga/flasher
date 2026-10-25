@@ -2,23 +2,41 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --threads=on|off\n' "${0##*/}" >&2
+  printf 'Usage: %s [--async=jspi|asyncify]\n' "${0##*/}" >&2
   exit 2
 }
 
-[[ $# -eq 1 ]] || usage
-case "$1" in
-  --threads=on) threads=on ;;
-  --threads=off) threads=off ;;
-  *) usage ;;
-esac
+async_mode=jspi
+async_seen=false
+for arg in "$@"; do
+  case "$arg" in
+    --async=jspi|--async=asyncify)
+      [[ "$async_seen" == false ]] || usage
+      async_mode="${arg#*=}"
+      async_seen=true
+      ;;
+    *) usage ;;
+  esac
+done
+
+for tool in autoreconf aclocal autoconf automake libtoolize; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'Required Autotools command not found: %s\n' "$tool" >&2
+    exit 1
+  fi
+  if ! "$tool" --version >/dev/null 2>&1; then
+    printf 'Autotools command is unusable: %s (%s --version failed); use a consistent Autotools installation.\n' \
+      "$(command -v "$tool")" "$tool" >&2
+    exit 1
+  fi
+done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_root="${BUILD_ROOT:-$root/build}"
 if [[ "$build_root" != /* ]]; then
   build_root="$root/$build_root"
 fi
-out="$build_root/threads-$threads"
+out="$build_root/$async_mode-pthread"
 [[ ! -e "$out" ]] || {
   printf 'Build output already exists: %s\n' "$out" >&2
   exit 1
@@ -43,22 +61,23 @@ fi
 # shellcheck source=/dev/null
 source "$emsdk_root/emsdk_env.sh"
 
-thread_flags=()
-if [[ "$threads" == on ]]; then
-  thread_flags=(-pthread)
+pthread_flags=(-pthread)
+pthread_string="${pthread_flags[*]}"
+c_flags="-Os"
+if [[ "$async_mode" == jspi ]]; then
+  c_flags="$c_flags -fwasm-exceptions"
+else
+  c_flags="$c_flags -fexceptions"
 fi
-thread_string="${thread_flags[*]}"
-c_flags="-Os -fexceptions"
-if [[ -n "$thread_string" ]]; then
-  c_flags="$c_flags $thread_string"
+if [[ -n "$pthread_string" ]]; then
+  c_flags="$c_flags $pthread_string"
 fi
 libusb_c_flags="$c_flags"
 loader_cxx_flags="$c_flags"
 link_flags=(
-  "${thread_flags[@]}"
+  "${pthread_flags[@]}"
   -lembind
   -s STRICT=1
-  -s ASYNCIFY=1
   -s INVOKE_RUN=0
   -s EXIT_RUNTIME=1
   -s MALLOC=emmalloc
@@ -70,12 +89,11 @@ link_flags=(
   -s EXPORT_ES6=1
   "-s ENVIRONMENT=worker,node"
   -s TEXTDECODER=1
-  -s DISABLE_EXCEPTION_CATCHING=0
 )
-if [[ "$threads" == off ]]; then
-  libusb_c_flags="$libusb_c_flags -matomics"
-  loader_cxx_flags="$loader_cxx_flags -matomics"
-  link_flags+=(-matomics)
+if [[ "$async_mode" == jspi ]]; then
+  link_flags+=(-fwasm-exceptions -s JSPI=1)
+else
+  link_flags+=(-s ASYNCIFY=1 -s DISABLE_EXCEPTION_CATCHING=0)
 fi
 link_string="${link_flags[*]}"
 
@@ -106,7 +124,7 @@ git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
   cd "$libusb_build"
   CFLAGS="$libusb_c_flags" \
   CXXFLAGS="$libusb_c_flags" \
-  LDFLAGS="$thread_string" \
+  LDFLAGS="$pthread_string" \
   ac_cv_host=wasm32-unknown-emscripten \
   ac_cv_func_clock_gettime=yes \
     emconfigure "$libusb_source/configure" \
@@ -115,8 +133,8 @@ git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
       --disable-shared \
       --enable-static
 )
-emmake make -C "$libusb_build" -j"$jobs" THREAD_CFLAGS="$thread_string"
-emmake make -C "$libusb_build" install THREAD_CFLAGS="$thread_string"
+emmake make -C "$libusb_build" -j"$jobs" THREAD_CFLAGS="$pthread_string"
+emmake make -C "$libusb_build" install THREAD_CFLAGS="$pthread_string"
 
 emcmake cmake \
   -S "$root/vendor/libftdi" \
@@ -164,6 +182,7 @@ build_openfpgaloader() {
     -DCMAKE_C_FLAGS="$c_flags" \
     -DCMAKE_CXX_FLAGS="$loader_cxx_flags" \
     -DCMAKE_EXE_LINKER_FLAGS="$link_string" \
+    "-DCMAKE_CXX_LINKER_LAUNCHER=/usr/bin/time;-v;-o;$build_dir/link-time.txt" \
     -DCMAKE_EXECUTABLE_SUFFIX_CXX=.mjs \
     -DCMAKE_PREFIX_PATH="$prefix" \
     "${options[@]}" &&
@@ -174,9 +193,25 @@ openfpgaloader_build="$out/openFPGALoader-build"
 if build_openfpgaloader "$openfpgaloader_build" no; then
   printf 'Reduced openFPGALoader configuration succeeded.\n'
 else
-  printf 'Reduced openFPGALoader configuration failed; retrying full upstream defaults.\n'
+  set +x
+  resource_failure=false
+  if grep -Eiq 'wasm-opt.*(SIGKILL|killed)|received SIGKILL' "$out/build.log"; then
+    resource_failure=true
+  fi
+  set -x
+  if [[ "$resource_failure" == true ]]; then
+    printf 'Reduced configuration failed during wasm-opt resource use; skipping full-config fallback.\n' >&2
+    exit 1
+  fi
+  printf 'Reduced configuration failed for a non-resource reason; retrying full upstream defaults.\n'
   openfpgaloader_build="$out/openFPGALoader-full-build"
   build_openfpgaloader "$openfpgaloader_build" yes
+fi
+
+link_file="$openfpgaloader_build/CMakeFiles/openFPGALoader.dir/link.txt"
+if [[ "$async_mode" == jspi ]] && grep -Eq -- '(^|[[:space:]])-s[[:space:]]+ASYNCIFY(=|[[:space:]]|$)' "$link_file"; then
+  printf 'Unexpected ASYNCIFY setting in JSPI linker command: %s\n' "$link_file" >&2
+  exit 1
 fi
 
 cp "$openfpgaloader_build/openFPGALoader.mjs" "$out/openFPGALoader.mjs"
