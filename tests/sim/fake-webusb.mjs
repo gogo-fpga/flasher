@@ -37,8 +37,24 @@ const TRANSITIONS = [
 ];
 
 class GowinTap {
-  constructor(idcode) {
+  constructor(idcode, faults) {
     this.idcode = idcode >>> 0;
+    this.faults = faults;
+    this.externalFlash = this.idcode === 0x0000081b;
+    this.nor = this.externalFlash ? new Uint8Array(8 * 1024 * 1024).fill(0xff) : null;
+    this.sram = [];
+    this.eflash = new Map();
+    this.spiCommands = [];
+    this.spiCommandCounts = new Map();
+    this.instructionCounts = new Map();
+    this.statusReads = [];
+    this.spiReadTrace = [];
+    this.wel = false;
+    this.norBusy = false;
+    this.norBusyPolls = 0;
+    this.readCorrupted = false;
+    this.disconnectAfter = faults.disconnectAfter ?? Infinity;
+    this.transferCount = 0;
     this.reset();
   }
 
@@ -47,25 +63,220 @@ class GowinTap {
     this.instruction = 0x11;
     this.irShift = 0x01;
     this.drShift = this.idcode;
+    this.status = (1 << 12) | (1 << 13) | (1 << 15) | (1 << 16);
+    this.usercode = 0;
+    this.drInputBits = [];
+    this.spiOutputBits = [];
+    this.spiOutputIndex = 0;
+    this.spiPrepared = false;
+  }
+
+  setInstruction(instruction) {
+    this.instruction = instruction & 0xff;
+    this.instructionCounts.set(
+      this.instruction,
+      (this.instructionCounts.get(this.instruction) ?? 0) + 1,
+    );
+    if (instruction === 0x15) this.status |= 1 << 7;
+    if (instruction === 0x3a) this.status &= ~(1 << 7);
+    if (instruction === 0x05) {
+      this.status &= ~((1 << 13) | (1 << 5));
+      this.status |= 1 << 5;
+      this.sram = [];
+    }
+    if (instruction === 0x09) this.status &= ~(1 << 5);
+    if (instruction === 0x08 && !this.faults.doneNever) this.status |= 1 << 13;
+    if (instruction === 0x75) {
+      this.status |= 1 << 13;
+      this.eflash.clear();
+    }
+    if (instruction === 0x71) this.eflashExpectAddress = true;
+    if (instruction === 0x3c) this.status |= 1 << 13;
+  }
+
+  registerValue() {
+    if (this.instruction === 0x11) return this.idcode;
+    if (this.instruction === 0x41) {
+      if (this.status & (1 << 13)) {
+        if (!this.faults.eflashBusyForever) this.status &= ~(1 << 13);
+      }
+      this.statusReads.push(this.status);
+      if (this.statusReads.length > 40) this.statusReads.shift();
+      return this.status;
+    }
+    if (this.instruction === 0x13) return this.usercode;
+    return 0;
+  }
+
+  prepareShift(inputBits, hasRead) {
+    if (this.state !== TAP.shiftDr || this.instruction !== 0x16 || !hasRead || this.spiPrepared) return;
+    const input = [];
+    for (let offset = 0; offset < inputBits.length; offset += 8) {
+      let byte = 0;
+      for (let bit = 0; bit < 8; bit += 1) {
+        byte = (byte << 1) | (inputBits[offset + bit] ?? 0);
+      }
+      input.push(byte);
+    }
+    const response = this.spiTransaction(input);
+    const trace = { bits: inputBits.length, input, response, tdoBits: [] };
+    this.spiReadTrace.push(trace);
+    if (this.spiReadTrace.length > 40) this.spiReadTrace.shift();
+    this.currentSpiReadTrace = trace;
+    this.spiPrepared = true;
+    const raw = new Uint8Array(response.length + 1);
+    for (let index = 0; index < response.length; index += 1) {
+      let reversed = response[index];
+      reversed = ((reversed & 0x55) << 1) | ((reversed >>> 1) & 0x55);
+      reversed = ((reversed & 0x33) << 2) | ((reversed >>> 2) & 0x33);
+      reversed = ((reversed & 0x0f) << 4) | ((reversed >>> 4) & 0x0f);
+      raw[index] = (raw[index] & 1) | ((reversed << 1) & 0xfe);
+      // Gowin::spi_wait reads the final status bit from the seven-bit MPSSE tail.
+      const carryOffset = input[0] === 0x05 ? 6 : 0;
+      raw[index + 1] |= (reversed >>> 7) << carryOffset;
+    }
+    this.spiOutputBits = [];
+    for (const byte of raw) {
+      for (let bit = 0; bit < 8; bit += 1) this.spiOutputBits.push((byte >>> bit) & 1);
+    }
+    this.spiOutputIndex = 0;
+  }
+
+  spiTransaction(input) {
+    if (input.length === 0) return [];
+    const command = input[0];
+    this.spiCommandCounts.set(command, (this.spiCommandCounts.get(command) ?? 0) + 1);
+    this.spiCommands.push(input.slice(0, 8));
+    if (this.spiCommands.length > 40) this.spiCommands.shift();
+    const response = new Array(input.length).fill(0);
+    const address = ((input[1] ?? 0) << 16) | ((input[2] ?? 0) << 8) | (input[3] ?? 0);
+    if (command === 0x9f) {
+      response[1] = 0xef;
+      response[2] = 0x40;
+      response[3] = 0x17;
+    } else if (command === 0x05) {
+      const status = (this.faults.norBusyForever || this.norBusy ? 1 : 0)
+        | (this.wel ? 2 : 0);
+      for (let index = 1; index < response.length; index += 1) {
+        response[index] = status;
+      }
+      if (this.norBusy && !this.faults.norBusyForever && this.norBusyPolls > 0) {
+        this.norBusyPolls -= 1;
+        if (this.norBusyPolls === 0) this.norBusy = false;
+      }
+    } else if (command === 0x06) {
+      this.wel = true;
+    } else if (command === 0x04) {
+      this.wel = false;
+    } else if ((command === 0x20 || command === 0xd8) && this.wel) {
+      const size = command === 0xd8 ? 0x10000 : 0x1000;
+      this.nor.fill(0xff, address & ~(size - 1), Math.min(this.nor.length, (address & ~(size - 1)) + size));
+      this.wel = false;
+      this.norBusy = true;
+      this.norBusyPolls = 1;
+    } else if (command === 0x02 && this.wel) {
+      for (let index = 4; index < input.length; index += 1) {
+        const location = (address & ~0xff) | ((address + index - 4) & 0xff);
+        this.nor[location] &= input[index];
+      }
+      this.wel = false;
+      this.norBusy = true;
+      this.norBusyPolls = 1;
+    } else if (command === 0x03) {
+      for (let index = 4; index < response.length; index += 1) {
+        const value = this.nor[(address + index - 4) % this.nor.length];
+        response[index] = this.faults.corruptNorReadback && !this.readCorrupted
+          ? value ^ (this.readCorrupted = true, 1)
+          : value;
+      }
+    } else if (command === 0xc7 && this.wel) {
+      this.nor.fill(0xff);
+      this.wel = false;
+      this.norBusy = true;
+      this.norBusyPolls = 1;
+    }
+    return response;
+  }
+
+  shiftedBytes() {
+    const bytes = new Uint8Array(Math.ceil(this.drInputBits.length / 8));
+    for (let bit = 0; bit < this.drInputBits.length; bit += 1) {
+      bytes[bit >>> 3] |= this.drInputBits[bit] << (bit & 7);
+    }
+    return bytes;
+  }
+
+  updateDataRegister() {
+    const bytes = this.shiftedBytes();
+    if (this.instruction === 0x17) {
+      for (let offset = 0; offset < bytes.length; offset += 8192) {
+        this.sram.push(...bytes.subarray(offset, offset + 8192));
+      }
+    } else if (this.instruction === 0x0a) {
+      this.usercode = (bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8)
+        | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24);
+    } else if (this.instruction === 0x08 && !this.faults.doneNever) {
+      this.status |= 1 << 13;
+    } else if (this.instruction === 0x71) {
+      if (this.eflashExpectAddress) {
+        this.eflashAddress = ((bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8)
+          | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24)) * 4;
+        this.eflashExpectAddress = false;
+      } else {
+        for (let offset = 0; offset < bytes.length; offset += 4) {
+          const word = bytes.slice(offset, offset + 4);
+          word.reverse();
+          for (const byte of word) this.eflash.set(this.eflashAddress++, byte);
+        }
+      }
+    } else if (this.instruction === 0x16 && !this.spiPrepared) {
+      const bytes = [];
+      for (let offset = 0; offset + 7 < this.drInputBits.length; offset += 8) {
+        let byte = 0;
+        for (let bit = 0; bit < 8; bit += 1) {
+          byte = (byte << 1) | this.drInputBits[offset + bit];
+        }
+        bytes.push(byte);
+      }
+      this.spiTransaction(bytes);
+    }
+    this.drInputBits = [];
+    this.spiPrepared = false;
   }
 
   clock(tms, tdi) {
     let tdo = 0;
     if (this.state === TAP.shiftDr) {
-      tdo = this.drShift & 1;
-      this.drShift = (this.drShift >>> 1) | ((tdi & 1) << 31);
+      if (this.instruction === 0x16) {
+        tdo = this.spiOutputBits[this.spiOutputIndex++] ?? 0;
+        this.currentSpiReadTrace?.tdoBits.push(tdo);
+      } else {
+        tdo = this.drShift & 1;
+        this.drShift = (this.drShift >>> 1) | ((tdi & 1) << 31);
+      }
+      if ([0x16, 0x17, 0x0a, 0x08, 0x71].includes(this.instruction)) {
+        this.drInputBits.push(tdi & 1);
+      }
     } else if (this.state === TAP.shiftIr) {
       tdo = this.irShift & 1;
       this.irShift = (this.irShift >>> 1) | ((tdi & 1) << 7);
     }
 
     const next = TRANSITIONS[this.state][tms ? 1 : 0];
+    if (this.state === TAP.shiftDr && next !== TAP.shiftDr && this.instruction === 0x16) {
+      this.spiPrepared = false;
+      this.currentSpiReadTrace = null;
+    }
     if (next === TAP.captureDr) {
-      this.drShift = this.instruction === 0x41 ? 0x00000001 : this.idcode;
+      this.drShift = this.registerValue();
+      this.drInputBits = [];
+      this.spiPrepared = false;
     } else if (next === TAP.captureIr) {
       this.irShift = 0x01;
+    } else if (next === TAP.updateDr) {
+      this.updateDataRegister();
     } else if (next === TAP.updateIr) {
-      this.instruction = this.irShift & 0xff;
+      this.setInstruction(this.irShift);
     } else if (next === TAP.reset) {
       this.instruction = 0x11;
     }
@@ -97,7 +308,7 @@ function stringDescriptor(value) {
 }
 
 class FakeUSBDevice {
-  constructor(idcode) {
+  constructor(idcode, faults) {
     this.vendorId = 0x0403;
     this.productId = 0x6010;
     this.manufacturerName = "Sipeed";
@@ -105,7 +316,8 @@ class FakeUSBDevice {
     this.serialNumber = "TN-S0-0001";
     this.opened = false;
     this.interfaceClaims = new Set();
-    this.tap = new GowinTap(idcode);
+    this.tap = new GowinTap(idcode, faults);
+    this.faults = faults;
     this.mpsseInput = [];
     this.mpsseOutput = [];
     this.strings = [
@@ -213,6 +425,9 @@ class FakeUSBDevice {
   }
 
   async transferOut(endpoint, data) {
+    if (++this.tap.transferCount > this.tap.disconnectAfter) {
+      throw new DOMException("Device disconnected", "NotFoundError");
+    }
     if (![2, 4, 0x02, 0x04].includes(endpoint)) {
       return { status: "stall", bytesWritten: 0 };
     }
@@ -222,6 +437,9 @@ class FakeUSBDevice {
   }
 
   async transferIn(endpoint, length) {
+    if (++this.tap.transferCount > this.tap.disconnectAfter) {
+      throw new DOMException("Device disconnected", "NotFoundError");
+    }
     if (![1, 3, 0x81, 0x83].includes(endpoint)) {
       return { status: "stall", data: new DataView(new ArrayBuffer(0)) };
     }
@@ -293,6 +511,15 @@ class FakeUSBDevice {
       const payload = this.mpsseInput.slice(headerSize, headerSize + dataBytes);
       this.mpsseInput.splice(0, headerSize + dataBytes);
       const bits = bitMode ? count : count * 8;
+      if (hasWrite && this.tap.state === TAP.shiftDr) {
+        const inputBits = [];
+        for (let bit = 0; bit < bits; bit += 1) {
+          const byteIndex = Math.floor(bit / 8);
+          const bitIndex = lsbFirst ? bit % 8 : 7 - (bit % 8);
+          inputBits.push((payload[byteIndex] >>> bitIndex) & 1);
+        }
+        this.tap.prepareShift(inputBits, hasRead);
+      }
       const received = new Array(bitMode ? 1 : count).fill(0);
       for (let bit = 0; bit < bits; bit++) {
         const byteIndex = Math.floor(bit / 8);
@@ -301,7 +528,7 @@ class FakeUSBDevice {
         const tdo = this.tap.clock(0, tdi);
         if (hasRead) {
           const outputBit = bitMode ? bit : bit % 8;
-          const outputIndex = lsbFirst ? outputBit : 7 - outputBit;
+          const outputIndex = bitMode ? 7 - outputBit : (lsbFirst ? outputBit : 7 - outputBit);
           received[byteIndex] |= tdo << outputIndex;
         }
       }
@@ -310,8 +537,8 @@ class FakeUSBDevice {
   }
 }
 
-export function createFakeUsb(idcode, { connected = true } = {}) {
-  const device = new FakeUSBDevice(idcode);
+export function createFakeUsb(idcode, { connected = true, faults = {} } = {}) {
+  const device = new FakeUSBDevice(idcode, faults);
   return {
     device,
     usb: {
