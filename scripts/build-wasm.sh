@@ -2,18 +2,27 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s [--async=jspi|asyncify]\n' "${0##*/}" >&2
+  printf 'Usage: %s [--async=jspi|asyncify] [--variant=ID[+FACTOR...]]\n' "${0##*/}" >&2
+  printf 'S1b factors: B, O2, O3, Oz, LTOL, LTOA, EHX, MG, M64, DL, MI, CL, EC, TD2, DE0, ST1M, P2P, SIMD\n' >&2
   exit 2
 }
 
 async_mode=jspi
 async_seen=false
+variant_id=
+variant_seen=false
 for arg in "$@"; do
   case "$arg" in
     --async=jspi|--async=asyncify)
       [[ "$async_seen" == false ]] || usage
       async_mode="${arg#*=}"
       async_seen=true
+      ;;
+    --variant=*)
+      [[ "$variant_seen" == false ]] || usage
+      variant_id="${arg#*=}"
+      [[ "$variant_id" =~ ^[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$ ]] || usage
+      variant_seen=true
       ;;
     *) usage ;;
   esac
@@ -36,11 +45,95 @@ build_root="${BUILD_ROOT:-$root/build}"
 if [[ "$build_root" != /* ]]; then
   build_root="$root/$build_root"
 fi
-out="$build_root/$async_mode-pthread"
+default_variant_id=C
+if [[ "$variant_seen" == false ]]; then
+  variant_id="$default_variant_id"
+  if [[ "$async_mode" == jspi ]]; then
+    out="$build_root/jspi-pthread"
+  else
+    out="$build_root/asyncify-pthread"
+  fi
+elif [[ "$async_mode" == jspi ]]; then
+  out="$build_root/$variant_id"
+else
+  printf 'Candidate profiles are only defined for --async=jspi.\n' >&2
+  exit 2
+fi
+
+if [[ "$async_mode" == jspi ]]; then
+  :
+else
+  if [[ "$variant_seen" == true ]]; then
+    printf 'Candidate profiles are only defined for --async=jspi.\n' >&2
+    exit 2
+  fi
+  variant_id=B
+fi
 [[ ! -e "$out" ]] || {
   printf 'Build output already exists: %s\n' "$out" >&2
   exit 1
 }
+
+opt=Os
+lto=none
+legacy_exceptions=1
+allow_memory_growth=0
+initial_memory=33554432
+maximum_memory=
+malloc=emmalloc
+closure=0
+eval_ctors=0
+textdecoder=1
+dynamic_execution=1
+stack_size=
+proxy_to_pthread=0
+simd=0
+opt_factors=0
+lto_factors=0
+malloc_factors=0
+memory_factors=0
+base_seen=
+IFS=+ read -r -a profile_parts <<< "$variant_id"
+for factor in "${profile_parts[@]}"; do
+  case "$factor" in
+    B|C)
+      [[ -z "$base_seen" ]] || {
+        printf 'A profile may name only one base (B or C): %s\n' "$variant_id" >&2
+        exit 2
+      }
+      base_seen="$factor"
+      ;;
+    O2|O3|Oz)
+      ((opt_factors += 1))
+      opt="$factor"
+      ;;
+    LTOL) ((lto_factors += 1)); lto=loader ;;
+    LTOA) ((lto_factors += 1)); lto=all ;;
+    EHX) legacy_exceptions=0 ;;
+    MG)
+      ((memory_factors += 1))
+      allow_memory_growth=1
+      initial_memory=16777216
+      maximum_memory=268435456
+      ;;
+    M64) ((memory_factors += 1)); initial_memory=67108864 ;;
+    DL) ((malloc_factors += 1)); malloc=dlmalloc ;;
+    MI) ((malloc_factors += 1)); malloc=mimalloc ;;
+    CL) closure=1 ;;
+    EC) eval_ctors=1 ;;
+    TD2) textdecoder=2 ;;
+    DE0) dynamic_execution=0 ;;
+    ST1M) stack_size=1048576 ;;
+    P2P) proxy_to_pthread=1 ;;
+    SIMD) simd=1 ;;
+    *) printf 'Unknown candidate factor: %s\n' "$factor" >&2; exit 2 ;;
+  esac
+done
+if (( opt_factors > 1 || lto_factors > 1 || malloc_factors > 1 || memory_factors > 1 )); then
+  printf 'Conflicting candidate factors in profile: %s\n' "$variant_id" >&2
+  exit 2
+fi
+
 mkdir -p "$out"
 exec > >(tee "$out/build.log") 2>&1
 set -x
@@ -61,28 +154,53 @@ fi
 # shellcheck source=/dev/null
 source "$emsdk_root/emsdk_env.sh"
 
-c_flags="-Os -ffile-prefix-map=$root=/src -ffile-prefix-map=$build_root=/build -pthread"
+deps_c_flags="-$opt -ffile-prefix-map=$root=/src -ffile-prefix-map=$build_root=/build -pthread"
 if [[ "$async_mode" == jspi ]]; then
-  c_flags="$c_flags -fwasm-exceptions"
+  deps_c_flags="$deps_c_flags -fwasm-exceptions"
 else
-  c_flags="$c_flags -fexceptions"
+  deps_c_flags="$deps_c_flags -fexceptions"
+fi
+loader_c_flags="$deps_c_flags"
+link_flags=()
+if [[ "$lto" == all ]]; then
+  deps_c_flags="$deps_c_flags -flto"
+  loader_c_flags="$loader_c_flags -flto"
+  link_flags+=(-flto)
+elif [[ "$lto" == loader ]]; then
+  loader_c_flags="$loader_c_flags -flto"
+  link_flags+=(-flto)
+fi
+if [[ "$simd" == 1 ]]; then
+  deps_c_flags="$deps_c_flags -msimd128"
+  loader_c_flags="$loader_c_flags -msimd128"
+  link_flags+=(-msimd128)
 fi
 link_flags=(
+  "${link_flags[@]}"
   -pthread
   -lembind
   -s STRICT=1
   -s INVOKE_RUN=0
   -s EXIT_RUNTIME=1
-  -s MALLOC=emmalloc
-  -s INITIAL_MEMORY=33554432
+  "-s MALLOC=$malloc"
+  "-s INITIAL_MEMORY=$initial_memory"
   "-s EXPORTED_RUNTIME_METHODS=FS,stackAlloc,stringToUTF8OnStack,ccall,callMain"
   "-s EXPORTED_FUNCTIONS=_main,_fflush"
   -s MODULARIZE=1
   -s EXPORT_NAME=instantiate
   -s EXPORT_ES6=1
   "-s ENVIRONMENT=worker,node"
-  -s TEXTDECODER=1
+  "-s TEXTDECODER=$textdecoder"
+  "-s WASM_LEGACY_EXCEPTIONS=$legacy_exceptions"
 )
+if [[ "$allow_memory_growth" == 1 ]]; then
+  link_flags+=(-s ALLOW_MEMORY_GROWTH=1 "-s MAXIMUM_MEMORY=$maximum_memory")
+fi
+if [[ "$closure" == 1 ]]; then link_flags+=(--closure 1); fi
+if [[ "$eval_ctors" == 1 ]]; then link_flags+=(-s EVAL_CTORS=1); fi
+if [[ "$dynamic_execution" == 0 ]]; then link_flags+=(-s DYNAMIC_EXECUTION=0); fi
+if [[ -n "$stack_size" ]]; then link_flags+=("-s STACK_SIZE=$stack_size"); fi
+if [[ "$proxy_to_pthread" == 1 ]]; then link_flags+=(-s PROXY_TO_PTHREAD=1); fi
 if [[ "$async_mode" == jspi ]]; then
   link_flags+=(-fwasm-exceptions -s JSPI=1)
 else
@@ -94,10 +212,12 @@ mkdir -p "$prefix"
 emcmake cmake \
   -S "$root/vendor/zlib" \
   -B "$out/zlib-build" \
-  -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS_RELEASE= \
+  -DCMAKE_CXX_FLAGS_RELEASE= \
   -DCMAKE_INSTALL_PREFIX="$prefix" \
-  -DCMAKE_C_FLAGS="$c_flags" \
-  -DCMAKE_CXX_FLAGS="$c_flags" \
+  -DCMAKE_C_FLAGS="$deps_c_flags" \
+  -DCMAKE_CXX_FLAGS="$deps_c_flags" \
   -DZLIB_BUILD_EXAMPLES=OFF \
   -DZLIB_BUILD_TESTING=OFF \
   -DZLIB_BUILD_SHARED=OFF \
@@ -115,8 +235,8 @@ git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
 )
 (
   cd "$libusb_build"
-  CFLAGS="$c_flags" \
-  CXXFLAGS="$c_flags" \
+  CFLAGS="$deps_c_flags" \
+  CXXFLAGS="$deps_c_flags" \
   LDFLAGS=-pthread \
   ac_cv_host=wasm32-unknown-emscripten \
   ac_cv_func_clock_gettime=yes \
@@ -132,11 +252,13 @@ emmake make -C "$libusb_build" install THREAD_CFLAGS=-pthread
 emcmake cmake \
   -S "$root/vendor/libftdi" \
   -B "$out/libftdi-build" \
-  -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS_RELEASE= \
+  -DCMAKE_CXX_FLAGS_RELEASE= \
   -DCMAKE_INSTALL_PREFIX="$prefix" \
   -DCMAKE_INSTALL_LIBDIR=lib \
-  -DCMAKE_C_FLAGS="$c_flags" \
-  -DCMAKE_CXX_FLAGS="$c_flags" \
+  -DCMAKE_C_FLAGS="$deps_c_flags" \
+  -DCMAKE_CXX_FLAGS="$deps_c_flags" \
   -DLIBUSB_INCLUDE_DIR="$prefix/include/libusb-1.0" \
   -DLIBUSB_LIBRARIES="$prefix/lib/libusb-1.0.a" \
   -DSTATICLIBS=ON \
@@ -158,16 +280,19 @@ build_openfpgaloader() {
   emcmake cmake \
     -S "$root/vendor/openFPGALoader" \
     -B "$build_dir" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS_RELEASE= \
+    -DCMAKE_CXX_FLAGS_RELEASE= \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
-    -DCMAKE_C_FLAGS="$c_flags" \
-    -DCMAKE_CXX_FLAGS="$c_flags" \
+    -DCMAKE_C_FLAGS="$loader_c_flags" \
+    -DCMAKE_CXX_FLAGS="$loader_c_flags" \
     -DCMAKE_EXE_LINKER_FLAGS="$link_string" \
     "-DCMAKE_CXX_LINKER_LAUNCHER=/usr/bin/time;-v;-o;$build_dir/link-time.txt" \
     -DCMAKE_EXECUTABLE_SUFFIX_CXX=.mjs \
     -DCMAKE_PREFIX_PATH="$prefix" \
     -DENABLE_VENDORS_ALL=OFF \
     -DENABLE_GOWIN_SUPPORT=ON \
+    -DENABLE_OPTIM=OFF \
     -DENABLE_CABLE_ALL=OFF \
     -DENABLE_FTDI_BASED_CABLE=ON
   emmake cmake --build "$build_dir" --parallel "$jobs"

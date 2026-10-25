@@ -82,7 +82,7 @@ for (const variant of variants) {
       for (let repeat = 1; repeat <= 5; repeat += 1) {
         const result = runDetect(variant, board.idcode);
         assert.equal(result.exitCode, 0, result.output);
-        if (variant.startsWith("jspi-")) {
+        if (!variant.startsWith("asyncify-")) {
           assert.equal(result.isPromise, true, "JSPI callMain must return a Promise");
         }
         const idcode = (board.detectedIdcode ?? board.idcode).toString(16).replace(/^0+/, "");
@@ -98,7 +98,7 @@ for (const variant of variants) {
       for (let repeat = 1; repeat <= 5; repeat += 1) {
         const result = runDetect(variant, board.idcode, ["-b", board.board, "--detect"]);
         assert.equal(result.exitCode, 0, result.output);
-        if (variant.startsWith("jspi-")) {
+        if (!variant.startsWith("asyncify-")) {
           assert.equal(result.isPromise, true, "JSPI callMain must return a Promise");
         }
         const idcode = (board.detectedIdcode ?? board.idcode).toString(16).replace(/^0+/, "");
