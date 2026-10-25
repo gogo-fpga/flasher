@@ -141,3 +141,18 @@ prefix-map build に対する `node --test tests/sim/*.test.mjs` は9/9 pass。�
 - clean rebuild: `build/repro/jspi-pthread/`, `build/jspi-pthread-repro-build-time.txt`
 - prefix-map clean builds and detect run: `build/repro-a/`, `build/repro-a-build-time.txt`, `build/repro-b/`, `build/repro-b-build-time.txt`
 - 全試行の build log と中間出力: `build/run1`〜`build/run9`, `build/negative-*`, `build/jspi-*`, `build/asyncify-pthread/`
+
+## 2026-10-25 追記: emsdk パスの正規化
+
+旧 map では、既定の `BUILD_ROOT=build` にある emsdk が `$build_root=/build` に一致し、狭い build root では `$root=/src` に一致した。その結果、既定 root の WASM は `40fba21d…`、`build/s1b/repro-C-b` の WASM は `7c17316b…` となった。DATA section はそれぞれ `0x13d97` と `0x13da7`。埋め込み `val.h` の文字列は、既定 root では `/build/emsdk-6.0.13/upstream/emscripten/cache/sysroot/include/emscripten/val.h`、狭い root では `/src/build/emsdk-6.0.13/upstream/emscripten/cache/sysroot/include/emscripten/val.h` だった。
+
+Clang の [command-line reference](https://clang.llvm.org/docs/ClangCommandLineReference.html) は、debug path に複数の `-fdebug-prefix-map` が一致した場合、最後の指定を使うとしている。emsdk install dir を `$emsdk_root=/emsdk` に明示的に対応させ、既存の root と build root の map より後に置いた。
+
+修正後に `BUILD_ROOT=build` と `BUILD_ROOT=build/repro-check2` で作った既定 C の成果物は同一だった。
+
+| Artifact | `build/` と `build/repro-check2/` の SHA-256 |
+|---|---|
+| `openFPGALoader.mjs` | `9005540841199936d9f983124e7a890e3661bd21f250b11e580346e8e7c0df27` |
+| `openFPGALoader.wasm` | `84cb4077c3d02ab5392d47798e6a10d540ad8db9e547424926501bdaaccd285c` |
+
+両 WASM の `strings` に `/home` と `/src` はなく、emsdk と中間 build のパスは `/emsdk/...` と `/build/jspi-pthread/...` に正規化されていた。
