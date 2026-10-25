@@ -48,9 +48,9 @@ openFPGALoader を WASM 化した既存の例です。
 | openFPGALoader | v1.2.0 | `befbab4f` | https://github.com/trabucayre/openFPGALoader |
 | libusb | v1.0.30 | `87a55632` | https://github.com/libusb/libusb |
 | libftdi | master | `92d657bc` | `git://developer.intra2net.com/libftdi` |
-| zlib | v1.3.2 | `216c70c0` | https://github.com/madler/zlib |
+| zlib | v1.3.2 | `da607da7` | https://github.com/madler/zlib |
 | emsdk | 6.0.13 | `35659964` | https://github.com/emscripten-core/emsdk |
-| yomiyasu | main | （submodule の固定値） | https://github.com/uist1idrju3i/yomiyasu |
+| yomiyasu | main | `552c12c4` | https://github.com/nanaism/yomiyasu |
 
 - 当初、タグを文字列の順で並べたため emsdk の最新を 6.0.9 と誤りました。`git ls-remote --tags --sort=-v:refname` で版の順に並べ直し、6.0.13 に直しました。
 - libftdi の http の取得元（`http://developer.intra2net.com/git/libftdi`）は dumb http のため shallow clone ができません（`dumb http transport does not support shallow capabilities`）。smart protocol の `git://` を使います。git:// は暗号化されませんが、superproject が固定する commit の SHA で中身を確かめられます。
