@@ -1,0 +1,37 @@
+record_type,variant,case,elapsed_seconds,artifact,bytes,sha256,notes
+tool,emsdk,version,,,,,vendor/emsdk tag 6.0.13; gitlink 35659964bc2762fffec0d257997fb61475f765b7
+tool,emcc,version,,,,,6.0.13 (e13ee988ce3d87a738dd8f3661d02223308c412a)
+tool,clang,version,,,,,24.0.0git (LLVM 83ee07799c341b60965f07892f7bb3d175da05be)
+tool,node,host,,,,,v24.21.0; emsdk bundled Node v24.19.0
+tool,autotools,host,,,,,Homebrew autoconf 2.73; automake 1.19; libtool 2.6.2 (run8)
+build,threads-off,run1-emsdk-6.0.9,,,,,superseded during wasm optimization; see build/run1/threads-off/build.log
+build,threads-off,run2-emsdk-6.0.13,,,,,stopped during optimization after discovering libusb generated THREAD_CFLAGS=-pthread; see build/run2/threads-off/build.log
+build,threads-off,run3-emsdk-6.0.13,,,,,failed in events_posix.c because Emscripten atomic builtins require target feature atomics; see build/run3/threads-off/build.log
+build,threads-off,run4-reduced,,,,,SIGKILL in wasm-opt --minify-imports-and-exports-and-modules; see build/run4/threads-off/build.log
+build,threads-off,run4-full-fallback,6139,build/run4/threads-off/openFPGALoader-full-build/openFPGALoader.wasm,9076009,,"Stopped by agent during wasm-opt --strip-target-features --post-emscripten -Os after elapsed process time 1:42:19; incomplete intermediate, not a final artifact"
+build,threads-on,run5,,,,,failed: ./bootstrap.sh: 10: exec: autoreconf: not found; see build/run5/threads-on.log
+build,threads-on,run6,,,,,failed: aclocal: error: couldn't open directory '/usr/share/aclocal-1.16': No such file or directory; see build/run6/threads-on.log
+build,threads-on,run7,,,,,failed: autom4te: error: /usr/share/autoconf/autoconf/trailer.m4: no such file or directory; see build/run7/threads-on.log
+build,threads-on,run8-reduced,,,,,SIGKILL in wasm-opt --minify-imports-and-exports-and-modules; see build/run8/threads-on.log
+build,threads-on,run8-full-fallback,980,build/run8/threads-on/openFPGALoader-full-build/openFPGALoader.wasm,9100861,,"Stopped by agent during wasm-opt --strip-target-features --post-emscripten -Os after elapsed process time 00:16:20; incomplete intermediate, not a final artifact"
+reproducibility,threads-off,clean-build SHA-256 comparison,,,,,not run; no completed artifact
+artifact,threads-off,final wasm and mjs raw/gzip sizes,,,,,not run; no completed artifact
+artifact,threads-on,final wasm and mjs raw/gzip sizes,,,,,not run; no completed artifact
+detect,threads-off,Tang Nano 1K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 1K -b tangnano1k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 4K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 4K -b tangnano4k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 9K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 9K -b tangnano9k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 20K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,Tang Nano 20K -b tangnano20k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-off,no device,,,,,not run; no completed artifact
+detect,threads-on,Tang Nano 1K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 1K -b tangnano1k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 4K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 4K -b tangnano4k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 9K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 9K -b tangnano9k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 20K plain --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,Tang Nano 20K -b tangnano20k --detect,,,,,not run; 5 repeats planned; no completed artifact
+detect,threads-on,no device,,,,,not run; no completed artifact
