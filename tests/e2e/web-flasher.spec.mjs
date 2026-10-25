@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { mkdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const fixture = resolve(repoRoot, "build/fixtures/tangnano9k.fs");
@@ -17,6 +18,49 @@ const isolatedResponseHeaders = {
   "Cross-Origin-Embedder-Policy": "require-corp",
   "Cross-Origin-Resource-Policy": "same-origin",
 };
+
+function listFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    return entry.isDirectory() ? listFiles(path) : [path];
+  });
+}
+
+function sha256(contents) {
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+function assertDistributionMatchesSources() {
+  const webRoot = resolve(repoRoot, "web");
+  const distRoot = resolve(repoRoot, "dist");
+  for (const sourcePath of listFiles(webRoot)) {
+    const path = relative(webRoot, sourcePath);
+    const distPath = resolve(distRoot, path);
+    let distContents;
+    try {
+      distContents = readFileSync(distPath);
+    } catch (error) {
+      throw new Error(`Playwright preflight: dist/${path} is missing`, {
+        cause: error,
+      });
+    }
+    if (!readFileSync(sourcePath).equals(distContents)) {
+      throw new Error(`Playwright preflight: dist/${path} differs from web/${path}`);
+    }
+  }
+
+  const buildRoot = resolve(repoRoot, process.env.BUILD_ROOT ?? "build");
+  const buildWasm = resolve(buildRoot, "jspi-pthread/openFPGALoader.wasm");
+  const distWasm = resolve(distRoot, "openFPGALoader.wasm");
+  const buildHash = sha256(readFileSync(buildWasm));
+  const distHash = sha256(readFileSync(distWasm));
+  if (distHash !== buildHash) {
+    throw new Error(
+      `Playwright preflight: dist/openFPGALoader.wasm SHA-256 ${distHash} ` +
+        `does not match ${relative(repoRoot, buildWasm)} SHA-256 ${buildHash}`,
+    );
+  }
+}
 
 async function stubPageUsb(page, unsupported = false) {
   await page.addInitScript((isUnsupported) => {
@@ -120,6 +164,10 @@ async function openSupportedPage(page) {
     "このブラウザーを利用できます。",
   );
 }
+
+test("built distribution matches sources and the build-root WASM", () => {
+  assertDistributionMatchesSources();
+});
 
 test("support check passes and the page renders", async ({ page }) => {
   await openSupportedPage(page);
