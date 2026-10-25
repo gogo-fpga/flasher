@@ -1,0 +1,6 @@
+/build/
+/node_modules/
+/.yomiyasu/
+/AGENTS.override.md
+/CLAUDE.local.md
+/.claude/settings.local.json
