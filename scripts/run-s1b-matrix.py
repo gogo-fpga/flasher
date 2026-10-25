@@ -35,7 +35,7 @@ TEST_FILES = sorted((ROOT / "tests" / "sim").glob("*.test.mjs"))
 
 def append_row(**values):
     with CSV_PATH.open("a", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\n")
         writer.writerow({field: values.get(field, "") for field in FIELDS})
 
 
