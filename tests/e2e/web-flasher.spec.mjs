@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const fixture = resolve(repoRoot, "build/fixtures/tangnano9k.fs");
+const fixture20k = resolve(repoRoot, "build/fixtures/tangnano20k.fs");
 const workerSource = readFileSync(resolve(repoRoot, "web/worker.js"), "utf8");
 const fakeWebUsbSource = readFileSync(
   resolve(repoRoot, "tests/sim/fake-webusb.mjs"),
@@ -26,6 +27,7 @@ async function stubPageUsb(page, unsupported = false) {
         ? undefined
         : {
             async requestDevice(options) {
+              window.__usbRequestCount = (window.__usbRequestCount ?? 0) + 1;
               window.__usbRequestOptions = options;
               return { productName: "Tang Nano (test fake)" };
             },
@@ -38,7 +40,10 @@ async function stubPageUsb(page, unsupported = false) {
   }, unsupported);
 }
 
-async function routeWorkerWithFakeUsb(page, faults = {}, onWorkerRequest = () => {}) {
+async function routeWorkerWithFakeUsb(
+  page,
+  { faults = {}, idcode = 0x1100481b, onWorkerRequest = () => {} } = {},
+) {
   await page.route("**/__e2e/fake-webusb.mjs", (route) =>
     route.fulfill({
       status: 200,
@@ -59,7 +64,7 @@ async function routeWorkerWithFakeUsb(page, faults = {}, onWorkerRequest = () =>
     onWorkerRequest();
     const wrapper = `
       import { createFakeUsb } from "/__e2e/fake-webusb.mjs";
-      const fake = createFakeUsb(0x1100481b, { faults: ${JSON.stringify(faults)} });
+      const fake = createFakeUsb(${idcode}, { faults: ${JSON.stringify(faults)} });
       const originalNavigator = globalThis.navigator;
       const fakeNavigator = Object.create(originalNavigator);
       Object.defineProperties(fakeNavigator, {
@@ -112,7 +117,7 @@ async function openSupportedPage(page) {
   await stubPageUsb(page);
   await page.goto("/");
   await expect(page.locator("#support-status")).toHaveText(
-    "このブラウザーは対応しています。",
+    "このブラウザーを利用できます。",
   );
 }
 
@@ -120,6 +125,10 @@ test("support check passes and the page renders", async ({ page }) => {
   await openSupportedPage(page);
   await expect(page.locator("#board-select option")).toHaveCount(4);
   await expect(page.getByRole("button", { name: "書き込む" })).toBeDisabled();
+  await expect(page.locator("#command-preview")).toHaveText(
+    "openFPGALoader -b tangnano1k /input.fs",
+  );
+  await expect(page.locator("#run-panel")).toBeHidden();
   await page.screenshot({
     path: resolve(screenshots, "initial.png"),
     fullPage: true,
@@ -128,8 +137,10 @@ test("support check passes and the page renders", async ({ page }) => {
 
 test("9K SRAM programming succeeds and reports progress", async ({ page }) => {
   let workerRequests = 0;
-  await routeWorkerWithFakeUsb(page, {}, () => {
-    workerRequests += 1;
+  await routeWorkerWithFakeUsb(page, {
+    onWorkerRequest: () => {
+      workerRequests += 1;
+    },
   });
   await openSupportedPage(page);
   await page.locator("#board-select").selectOption("tangnano9k");
@@ -139,11 +150,14 @@ test("9K SRAM programming succeeds and reports progress", async ({ page }) => {
   await expect(page.locator("#result-status")).toHaveText("成功", {
     timeout: 30_000,
   });
-  await expect(page.locator("#command-line")).toHaveText(
+  await expect(page.locator("#command-preview")).toHaveText(
     "openFPGALoader -b tangnano9k /input.fs",
   );
   await expect(page.locator("#program-log")).toContainText("Load SRAM");
   await expect(page.locator("#progress-bar")).toHaveJSProperty("value", 100);
+  await expect(page.locator("#support-status")).toHaveText(
+    "このブラウザーを利用できます。",
+  );
   expect(await page.evaluate(() => window.__usbRequestOptions.filters)).toEqual([
     { vendorId: 0x0403, productId: 0x6010 },
   ]);
@@ -155,7 +169,7 @@ test("9K SRAM programming succeeds and reports progress", async ({ page }) => {
 });
 
 test("DONE never set is reported as failure despite exit zero", async ({ page }) => {
-  await routeWorkerWithFakeUsb(page, { doneNever: true });
+  await routeWorkerWithFakeUsb(page, { faults: { doneNever: true } });
   await openSupportedPage(page);
   await page.locator("#board-select").selectOption("tangnano9k");
   await page.locator("#bitstream-file").setInputFiles(fixture);
@@ -165,6 +179,9 @@ test("DONE never set is reported as failure despite exit zero", async ({ page })
     timeout: 30_000,
   });
   await expect(page.locator("#program-log")).toContainText("FAIL");
+  await expect(page.locator("#support-status")).toHaveText(
+    "このブラウザーを利用できます。",
+  );
   await page.screenshot({
     path: resolve(screenshots, "failure.png"),
     fullPage: true,
@@ -175,8 +192,10 @@ test("IDCODE mismatch requires confirmation and cancel stops the run", async ({
   page,
 }) => {
   let workerRequests = 0;
-  await routeWorkerWithFakeUsb(page, {}, () => {
-    workerRequests += 1;
+  await routeWorkerWithFakeUsb(page, {
+    onWorkerRequest: () => {
+      workerRequests += 1;
+    },
   });
   await openSupportedPage(page);
   await page.locator("#board-select").selectOption("tangnano1k");
@@ -186,14 +205,95 @@ test("IDCODE mismatch requires confirmation and cancel stops the run", async ({
   const dialog = page.locator("#idcode-dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("一致しません");
+  await expect(dialog).toContainText("0x0100681b");
+  await expect(dialog).toContainText("0x0100481b");
+  await expect(dialog).toContainText("生の値 0x1100481b");
+  await expect(page.locator("#run-panel")).toBeHidden();
   await page.screenshot({
     path: resolve(screenshots, "mismatch-warning.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("#run-panel")).toBeHidden();
+  await expect(page.locator("#support-status")).toHaveText(
+    "このブラウザーを利用できます。",
+  );
+  expect(await page.evaluate(() => window.__usbRequestCount ?? 0)).toBe(0);
+  expect(workerRequests).toBe(0);
+});
+
+test("IDCODE mismatch confirmation requests a device after Continue", async ({
+  page,
+}) => {
+  let workerRequests = 0;
+  await routeWorkerWithFakeUsb(page, {
+    onWorkerRequest: () => {
+      workerRequests += 1;
+    },
+  });
+  await openSupportedPage(page);
+  await page.locator("#board-select").selectOption("tangnano1k");
+  await page.locator("#bitstream-file").setInputFiles(fixture);
+  await page.getByRole("button", { name: "書き込む" }).click();
+
+  const dialog = page.locator("#idcode-dialog");
+  await expect(dialog).toBeVisible();
+  expect(await page.evaluate(() => window.__usbRequestCount ?? 0)).toBe(0);
+  await dialog.getByRole("button", { name: "続行する" }).click();
+
+  await expect(page.locator("#result-status")).toHaveText("成功", {
+    timeout: 30_000,
+  });
+  expect(await page.evaluate(() => window.__usbRequestOptions.filters)).toEqual([
+    { vendorId: 0x0403, productId: 0x6010 },
+  ]);
+  expect(workerRequests).toBe(1);
+});
+
+test("20K flash programming succeeds with verification", async ({ page }) => {
+  await routeWorkerWithFakeUsb(page, { idcode: 0x0000081b });
+  await openSupportedPage(page);
+  await page.locator("#board-select").selectOption("tangnano20k");
+  await page.locator("#bitstream-file").setInputFiles(fixture20k);
+  await page.locator('input[name="target"][value="flash"]').check();
+
+  await expect(page.locator("#command-preview")).toHaveText(
+    "openFPGALoader -b tangnano20k -f /input.fs --verify",
+  );
+  await page.getByRole("button", { name: "書き込む" }).click();
+  try {
+    await expect(page.locator("#result-status")).toHaveText("成功", {
+      timeout: 30_000,
+    });
+  } catch (error) {
+    error.message += `\nProgram log:\n${await page.locator("#program-log").textContent()}`;
+    throw error;
+  }
+  await expect(page.locator("#progress-bar")).toHaveJSProperty("value", 100);
+  await page.screenshot({
+    path: resolve(screenshots, "flash-20k.png"),
     fullPage: true,
   });
-  await dialog.getByRole("button", { name: "キャンセル" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.locator("#result-status")).toHaveText("中止しました。");
-  expect(workerRequests).toBe(0);
+});
+
+test("command preview updates when board and target change", async ({ page }) => {
+  await openSupportedPage(page);
+  const preview = page.locator("#command-preview");
+
+  await page.locator("#board-select").selectOption("tangnano20k");
+  await expect(preview).toHaveText(
+    "openFPGALoader -b tangnano20k /input.fs",
+  );
+  await page.locator('input[name="target"][value="flash"]').check();
+  await expect(preview).toHaveText(
+    "openFPGALoader -b tangnano20k -f /input.fs --verify",
+  );
+  await page.locator("#board-select").selectOption("tangnano1k");
+  await expect(preview).toHaveText(
+    "openFPGALoader -b tangnano1k -f /input.fs",
+  );
+  await expect(preview).not.toContainText("--verify");
 });
 
 test("unsupported browser shows a message and keeps the button disabled", async ({
@@ -203,7 +303,7 @@ test("unsupported browser shows a message and keeps the button disabled", async 
   await page.goto("/");
 
   await expect(page.locator("#support-status")).toContainText(
-    "このブラウザーでは書き込めません",
+    "このブラウザーでは書き込めません。足りない機能：",
   );
   await expect(page.getByRole("button", { name: "書き込む" })).toBeDisabled();
   await page.screenshot({
