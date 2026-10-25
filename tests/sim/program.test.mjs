@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 const repoRoot = resolve(import.meta.dirname, "../..");
 const runner = resolve(import.meta.dirname, "run-program.mjs");
 const buildRoot = resolve(process.env.WASM_BUILD_ROOT ?? "build");
-const variant = "jspi-pthread";
+const variant = process.env.WASM_VARIANT ?? "jspi-pthread";
 const boards = [
   { name: "Tang Nano 1K", board: "tangnano1k", idcode: 0x0100681b },
   { name: "Tang Nano 4K", board: "tangnano4k", idcode: 0x0100981b },
