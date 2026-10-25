@@ -64,6 +64,7 @@ class GowinTap {
     this.irShift = 0x01;
     this.drShift = this.idcode;
     this.status = (1 << 12) | (1 << 13) | (1 << 15) | (1 << 16);
+    this.eflashErasePending = false;
     this.usercode = 0;
     this.drInputBits = [];
     this.spiOutputBits = [];
@@ -88,6 +89,7 @@ class GowinTap {
     if (instruction === 0x08 && !this.faults.doneNever) this.status |= 1 << 13;
     if (instruction === 0x75) {
       this.status |= 1 << 13;
+      this.eflashErasePending = true;
       this.eflash.clear();
     }
     if (instruction === 0x71) this.eflashExpectAddress = true;
@@ -97,8 +99,9 @@ class GowinTap {
   registerValue() {
     if (this.instruction === 0x11) return this.idcode;
     if (this.instruction === 0x41) {
-      if (this.status & (1 << 13)) {
-        if (!this.faults.eflashBusyForever) this.status &= ~(1 << 13);
+      if (this.eflashErasePending && !this.faults.eflashBusyForever) {
+        this.status &= ~(1 << 13);
+        this.eflashErasePending = false;
       }
       this.statusReads.push(this.status);
       if (this.statusReads.length > 40) this.statusReads.shift();

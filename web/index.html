@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Tang Nano Web Flasher</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <p class="eyebrow">GOWIN FPGA</p>
+        <h1>Tang Nano Web Flasher</h1>
+        <p class="intro">
+          ブラウザーから Tang Nano にビットストリームを書き込みます。
+          書き込み中は USB ケーブルを抜かないでください。
+        </p>
+      </header>
+
+      <section class="panel" aria-labelledby="support-heading">
+        <h2 id="support-heading">ブラウザーの確認</h2>
+        <p id="support-status" role="status" aria-live="polite">確認しています。</p>
+      </section>
+
+      <form id="program-form" class="panel">
+        <label class="field" for="board-select">
+          <span>ボード</span>
+          <select id="board-select" name="board" required></select>
+        </label>
+
+        <label class="field" for="bitstream-file">
+          <span>ビットストリーム (.fs)</span>
+          <input
+            id="bitstream-file"
+            name="bitstream"
+            type="file"
+            accept=".fs,text/plain"
+            required
+          />
+        </label>
+
+        <fieldset class="target-options">
+          <legend>書き込み先</legend>
+          <label>
+            <input type="radio" name="target" value="sram" checked />
+            <span>SRAM：電源を切ると消える</span>
+          </label>
+          <label>
+            <input type="radio" name="target" value="flash" />
+            <span>フラッシュ：電源を切っても残る</span>
+          </label>
+        </fieldset>
+
+        <p class="caution">
+          フラッシュへの書き込みは既存の内容を消去します。対象のボードとファイルを確認してください。
+        </p>
+
+        <button id="program-button" type="submit" disabled>書き込む</button>
+      </form>
+
+      <section id="run-panel" class="panel run-panel" aria-labelledby="run-heading" hidden>
+        <h2 id="run-heading">書き込み結果</h2>
+        <p id="result-status" role="status" aria-live="polite"></p>
+        <h3>実行コマンド</h3>
+        <pre class="command"><code id="command-line"></code></pre>
+        <label class="progress-label" for="progress-bar">進捗</label>
+        <progress id="progress-bar" max="100" value="0">0%</progress>
+        <h3>ログ</h3>
+        <pre id="program-log" class="program-log" aria-live="polite"></pre>
+      </section>
+    </main>
+
+    <dialog id="idcode-dialog" aria-labelledby="idcode-heading">
+      <h2 id="idcode-heading">IDCODE を確認してください</h2>
+      <p id="idcode-warning"></p>
+      <p>対象が正しいことを確認してから続行してください。</p>
+      <form method="dialog" class="dialog-actions">
+        <button value="cancel" class="secondary">キャンセル</button>
+        <button value="continue">続行する</button>
+      </form>
+    </dialog>
+  </body>
+</html>
