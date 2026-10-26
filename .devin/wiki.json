@@ -1,0 +1,87 @@
+{
+  "repo_notes": [
+    {
+      "content": "GOGO-FPGA flasher は、Sipeed Tang Nano 1K・4K・9K・20K（GOWIN 製 FPGA）に、Chromium 系ブラウザーの WebUSB からビットストリーム（.fs）を書き込む Web アプリです。書き込み処理は upstream の openFPGALoader v1.2.0 を変更せずに Emscripten で WASM にして使います。CLI やネイティブのバイナリーはありません。GitHub Pages にも公開していません。"
+    },
+    {
+      "content": "Wiki は日本語で書いてください。コード、識別子、ファイル名、コマンド、Emscripten の設定名は英語のまま記載します。リポジトリのドキュメント（README.md、RESEARCH.md、docs/）も日本語です。"
+    },
+    {
+      "content": "vendor/ 配下（openFPGALoader、libusb、libftdi、zlib、emsdk、yomiyasu）は shallow submodule で取り込んだ外部コードで、編集していません。内部を詳しく説明する必要はありません。このリポジトリがどのファイルやどの仕組みを使っているかを、scripts/build-wasm.sh、.gitmodules、RESEARCH.md から説明してください。"
+    },
+    {
+      "content": "確認済みの事実と未確認事項を区別してください。書き込みは tests/sim/fake-webusb.mjs の仮想の FT2232・GOWIN TAP・NOR フラッシュと、Node のテスト（tests/sim/）、Playwright（tests/e2e/）で確かめています。実機の Tang Nano では試していません。仮想デバイスで測った時間を、実機の値のように書かないでください。"
+    },
+    {
+      "content": "主要なデータの流れです。scripts/build-wasm.sh が libusb・libftdi・zlib・openFPGALoader を JSPI + pthread + -fwasm-exceptions + -Os でビルドし、build-info.json を作ります。scripts/build-web.sh が web/ と WASM を dist/ にまとめ、build-info.json と照合します。画面（web/app.js）は .fs の IDCODE を確かめてから navigator.usb.requestDevice を呼び、1 回ごとに新しい Worker（web/worker.js）と WASM のインスタンスを作って callMain に引数を渡します。引数は web/lib/build-args.mjs が作り、適用の条件は web/lib/options.mjs が決めます。"
+    }
+  ],
+  "pages": [
+    {
+      "title": "概要とプロジェクトの目的",
+      "purpose": "対象ボード、対応ブラウザー、配布方法、対象外とするもの（CLI、ネイティブ、GitHub Pages）、開発状況を説明する",
+      "page_notes": [
+        { "content": "README.md と RESEARCH.md の「目的と前提」「対象ボード」を主な根拠にしてください。" }
+      ]
+    },
+    {
+      "title": "リポジトリ構成と開発ルール",
+      "purpose": "ディレクトリ構成、AGENTS.md の作業規約（main の保護、日本語、JIS X 0213、vendor/ の扱い、実機で試していないことの書き方）、Codex と Claude Code 向けのスキルリンクを説明する",
+      "parent": "概要とプロジェクトの目的",
+      "page_notes": [
+        { "content": "AGENTS.md、CLAUDE.md、.agents/skills/、.claude/skills/、.github/workflows/agent-docs.yml を根拠にしてください。" }
+      ]
+    },
+    {
+      "title": "WASM のビルド",
+      "purpose": "依存の固定、Emscripten の版、build-wasm.sh の手順、ビルドの再現性（-ffile-prefix-map）、build-info.json による照合を説明する",
+      "page_notes": [
+        { "content": "scripts/build-wasm.sh、scripts/build-info.py、scripts/build-web.sh、.gitmodules、RESEARCH.md の「依存関係」を根拠にしてください。" }
+      ]
+    },
+    {
+      "title": "Emscripten のビルドオプションの選定",
+      "purpose": "JSPI と ASYNCIFY、pthread の要否、例外の方式、最適化レベル、LTO、メモリー、MODULARIZE/EXPORT_ES6 などの比較と、採用した構成の理由を説明する",
+      "parent": "WASM のビルド",
+      "page_notes": [
+        { "content": "RESEARCH.md の「Emscripten のビルドオプション」と docs/experiments/S0-wasm-build.md、S1b-option-matrix.md を根拠にしてください。測定は仮想 USB での値です。" }
+      ]
+    },
+    {
+      "title": "Web 画面と Worker",
+      "purpose": "画面の操作の流れ、IDCODE の事前確認、WebUSB の機器の選択、Worker と MEMFS、ログの判定（終了コードと FAIL）、時間の上限、COOP/COEP を説明する",
+      "page_notes": [
+        { "content": "web/index.html、web/app.js、web/worker.js、web/lib/、web/serve.py を根拠にしてください。" }
+      ]
+    },
+    {
+      "title": "高度な設定と openFPGALoader のオプション",
+      "purpose": "書き込み・読み出し・消去の操作、ボードごとに使えるオプションと使えない理由、コマンドの組み立てを説明する",
+      "parent": "Web 画面と Worker",
+      "page_notes": [
+        { "content": "web/lib/options.mjs、web/lib/build-args.mjs、RESEARCH.md の「高度な設定と Gowin の動作」を根拠にしてください。upstream の行番号は RESEARCH.md の引用に従ってください。" }
+      ]
+    },
+    {
+      "title": "仮想 USB によるテスト",
+      "purpose": "仮想の FT2232/MPSSE、GOWIN TAP、NOR フラッシュ、GW1N の BSCAN 経路、故障の注入、負の対照、テストの層（単体、仮想 USB、Playwright）を説明する",
+      "page_notes": [
+        { "content": "tests/sim/、tests/web/、tests/e2e/、tests/fixtures/、.agents/skills/fake-usb/SKILL.md、docs/experiments/S1a-program-sim.md を根拠にしてください。実機では試していないことを明記してください。" }
+      ]
+    },
+    {
+      "title": "調査記録の読み方",
+      "purpose": "RESEARCH.md と docs/experiments/ の構成、実験記録の書き方、未確認事項を説明する",
+      "page_notes": [
+        { "content": "RESEARCH.md、docs/experiments/README.md、.agents/skills/experiment-record/ を根拠にしてください。" }
+      ]
+    },
+    {
+      "title": "ライセンス",
+      "purpose": "部品ごとのライセンスと、配布で必要なこと（LGPL の部品のソースと再リンクの手段など）を説明する",
+      "page_notes": [
+        { "content": "RESEARCH.md の「ライセンス」と README.md を根拠にしてください。" }
+      ]
+    }
+  ]
+}
