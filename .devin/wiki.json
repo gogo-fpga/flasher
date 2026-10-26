@@ -88,7 +88,7 @@
       "purpose": "build、lint、agent-docs、固定版の更新確認の各 workflow が検査する内容と、Dependabot が週次で確認する依存を説明する",
       "page_notes": [
         {
-          "content": ".github/workflows/build.yml は WASM と Web のビルド、単体・仮想 USB・Playwright テストを実行します。.github/workflows/lint.yml は workflow、shell、依存 pin、zizmor を検査します。.github/workflows/agent-docs.yml は文書とスキルリンクを検査します。.github/workflows/pins-check.yml は固定版の更新を確認して Issue に知らせます。.github/dependabot.yml は branch を追う submodule、GitHub Actions、npm、pip を週次で確認します。"
+          "content": ".github/workflows/build.yml は変更 path を判定してから build します。emsdk と fixture の cache を条件付きで使い、build artifact は 3 つの simulator shard と Playwright に共有します。sim-coverage が TAP report の失敗と網羅性を検査し、週次 schedule は cache を使わない cold build です。.github/workflows/lint.yml は workflow、shell、依存 pin、zizmor、shard coverage checker を対象にします。.github/workflows/agent-docs.yml は文書とスキルリンクの検査担当です。.github/workflows/pins-check.yml は固定版の更新時に Issue を開きます。.github/dependabot.yml は branch を追う submodule、GitHub Actions、npm、pip を週次で確認します。"
         }
       ]
     }
