@@ -218,17 +218,6 @@ jobs:
           path: dist/
           retention-days: 30
 
-      - name: E2E 失敗資料を保存
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: flasher-web-test-failures-${{ github.sha }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Summarize step timings
         if: always()
         continue-on-error: true
