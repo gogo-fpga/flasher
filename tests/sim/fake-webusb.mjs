@@ -36,6 +36,35 @@ const TRANSITIONS = [
   [TAP.idle, TAP.selectDr],
 ];
 
+const TRACE_ENABLED = process.env.FAKE_USB_TRACE === "1";
+const TRACE_INSTRUCTIONS = new Set([0x0a, 0x13, 0x15, 0x3c, 0x71, 0x3a]);
+const TRACE_COUNTS = new Map();
+
+function traceHex(value, width = 8) {
+  return `0x${(value >>> 0).toString(16).padStart(width, "0")}`;
+}
+
+function traceFakeUsb(message) {
+  if (TRACE_ENABLED) process.stderr.write(`FAKE_USB_TRACE ${message}\n`);
+}
+
+function traceFakeUsbEvent(key, message, first = Infinity, interval = 1) {
+  if (!TRACE_ENABLED) return;
+  const count = (TRACE_COUNTS.get(key) ?? 0) + 1;
+  TRACE_COUNTS.set(key, count);
+  if (count <= first || (interval > 0 && count % interval === 0)) {
+    traceFakeUsb(message);
+  }
+}
+
+if (TRACE_ENABLED) {
+  process.on("exit", () => {
+    for (const [event, count] of TRACE_COUNTS) {
+      process.stderr.write(`FAKE_USB_TRACE summary event=${event} count=${count}\n`);
+    }
+  });
+}
+
 const NOR_PHASES = Object.freeze({
   0x01: "nor-write-status",
   0x02: "nor-page-program",
@@ -106,6 +135,8 @@ class GowinTap {
   }
 
   reset() {
+    const previousInstruction = this.instruction;
+    const previousUsercode = this.usercode;
     this.state = TAP.reset;
     this.instruction = 0x11;
     this.irShift = 0x01;
@@ -125,10 +156,21 @@ class GowinTap {
     this.spiOutputBits = [];
     this.spiOutputIndex = 0;
     this.spiPrepared = false;
+    if (previousInstruction !== undefined || previousUsercode !== undefined) {
+      traceFakeUsb(
+        `state-reset kind=device instruction=${previousInstruction === undefined ? "none" : traceHex(previousInstruction, 2)} usercode=${previousUsercode === undefined ? "none" : traceHex(previousUsercode)} next_usercode=${traceHex(this.usercode)}`,
+      );
+    }
   }
 
   setInstruction(instruction) {
     this.instruction = instruction & 0xff;
+    if (TRACE_INSTRUCTIONS.has(this.instruction)) {
+      traceFakeUsbEvent(
+        `ir-load-${traceHex(this.instruction, 2)}`,
+        `ir-load instruction=${traceHex(this.instruction, 2)} phase=${this.phase ?? "none"} usercode=${traceHex(this.usercode)} status=${traceHex(this.status)}`,
+      );
+    }
     if (instruction === 0x15) this.phase = "config-enable";
     else if (instruction === 0x3d) this.phase = "bscan-spi";
     else if (instruction === 0x16) this.phase = "jtag-spi";
@@ -386,6 +428,14 @@ class GowinTap {
 
   updateDataRegister() {
     const bytes = this.shiftedBytes();
+    if (TRACE_INSTRUCTIONS.has(this.instruction)) {
+      const data = Array.from(bytes.subarray(0, 8), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      const key = `dr-update-${traceHex(this.instruction, 2)}`;
+      const message = `dr-update instruction=${traceHex(this.instruction, 2)} bits=${this.drInputBits.length} bytes=${bytes.length} data=${data || "-"} usercode=${traceHex(this.usercode)}`;
+      traceFakeUsbEvent(key, message, this.instruction === 0x71 ? 3 : Infinity, this.instruction === 0x71 ? 8192 : 1);
+    }
     if (this.instruction === 0x17) {
       for (let offset = 0; offset < bytes.length; offset += 8192) {
         this.sram.push(...bytes.subarray(offset, offset + 8192));
@@ -393,6 +443,9 @@ class GowinTap {
     } else if (this.instruction === 0x0a) {
       this.usercode = (bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8)
         | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24);
+      traceFakeUsb(
+        `usercode-set instruction=0x0a value=${traceHex(this.usercode)}`,
+      );
     } else if (this.instruction === 0x08 && !this.faults.doneNever) {
       this.status |= 1 << 13;
     } else if (this.instruction === 0x71) {
@@ -449,6 +502,12 @@ class GowinTap {
     }
     if (next === TAP.captureDr) {
       this.drShift = this.registerValue();
+      if (this.instruction === 0x13) {
+        traceFakeUsbEvent(
+          `dr-read-${traceHex(this.instruction, 2)}`,
+          `dr-read instruction=${traceHex(this.instruction, 2)} value=${traceHex(this.drShift)} usercode=${traceHex(this.usercode)}`,
+        );
+      }
       this.drInputBits = [];
       this.spiPrepared = false;
     } else if (next === TAP.captureIr) {
@@ -458,6 +517,11 @@ class GowinTap {
     } else if (next === TAP.updateIr) {
       this.setInstruction(this.irShift);
     } else if (next === TAP.reset) {
+      if (this.state !== TAP.reset) {
+        traceFakeUsb(
+          `state-reset kind=tap instruction=${traceHex(this.instruction, 2)} usercode=${traceHex(this.usercode)} status=${traceHex(this.status)}`,
+        );
+      }
       this.instruction = 0x11;
     }
     this.state = next;

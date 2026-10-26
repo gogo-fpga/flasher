@@ -17,11 +17,17 @@ jobs:
   build:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
+
+      - name: ビルド時間の計測を開始
+        run: echo "BUILD_PIPELINE_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Autotools をインストール
         run: |
@@ -46,25 +52,56 @@ jobs:
         run: git -C vendor/emsdk fetch --depth=1 --tags origin
 
       - name: WASM をビルド
-        run: scripts/build-wasm.sh
+        id: wasm-build
+        run: |
+          echo "WASM_BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "WASM_BUILD_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          scripts/build-wasm.sh
 
       - name: Web アプリを組み立て
-        run: scripts/build-web.sh
+        run: |
+          echo "WEB_BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "WEB_BUILD_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          scripts/build-web.sh
 
       - name: 成果物の SHA-256 を記録
         run: sha256sum build/jspi-pthread/*.wasm build/jspi-pthread/*.mjs | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: テスト用ビットストリームを生成
-        run: tests/fixtures/build-fs.sh
+        run: |
+          echo "FIXTURES_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "FIXTURES_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          tests/fixtures/build-fs.sh
+
+      - name: fixture の SHA-256 を記録
+        run: sha256sum build/fixtures/*.fs | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Web 単体テスト
-        run: node --test tests/web/*.test.mjs
+        run: |
+          echo "WEB_TESTS_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "WEB_TESTS_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          node --test tests/web/*.test.mjs
+
+      - name: GW1N 内部フラッシュの命令 trace
+        env:
+          FAKE_USB_TRACE: "1"
+          WASM_BUILD_ROOT: build
+        run: >-
+          node --test
+          --test-name-pattern='^flash programming: Tang Nano (1K|4K|9K)$'
+          tests/sim/program.test.mjs
 
       - name: 仮想 USB シミュレーション
-        run: WASM_BUILD_ROOT=build node --test --test-concurrency=1 tests/sim/*.test.mjs
+        run: |
+          echo "SIM_TESTS_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "SIM_TESTS_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          WASM_BUILD_ROOT=build node --test --test-concurrency=1 tests/sim/*.test.mjs
 
       - name: Playwright E2E
-        run: npx playwright test
+        run: |
+          echo "PLAYWRIGHT_START=$(date +%s)" >> "$GITHUB_ENV"
+          trap 'echo "PLAYWRIGHT_END=$(date +%s)" >> "$GITHUB_ENV"' EXIT
+          npx playwright test
 
       - name: Web 成果物を保存
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -83,3 +120,56 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: ステップ時間を集計
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_JOB_NAME: build
+        run: |
+          # shellcheck disable=SC2016
+          step_lines="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" --paginate --jq '
+            .jobs[] | select(.name == env.BUILD_JOB_NAME) as $job |
+            "=ci-meta=\tjob_started_at\t\($job.started_at)",
+            ($job.steps[] | select(.completed_at != null) |
+              "=step-time=\t\(.number)\t\(.name)\t\(.started_at)\t\(.completed_at)\t\(if .started_at == null then "unknown" else ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)) end)\t\(.conclusion)")
+          ' 2>/dev/null)" || step_lines=""
+          now=$(date +%s)
+          if [[ -n "$step_lines" ]]; then
+            printf '%s\n' "$step_lines"
+            job_started=$(printf '%s\n' "$step_lines" | awk -F '\t' '$1 == "=ci-meta=" && $2 == "job_started_at" { print $3; exit }')
+            if [[ -n "$job_started" ]]; then
+              total_seconds=$((now - $(date -d "$job_started" +%s)))
+            else
+              total_seconds=unknown
+            fi
+            {
+              printf '| # | Step | Started at | Completed at | Seconds | Conclusion |\n'
+              printf '|---:|---|---|---|---:|---|\n'
+              printf '%s\n' "$step_lines" | awk -F '\t' '$1 == "=step-time=" { printf "| %s | %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6, $7 }'
+              printf '| - | Total job to summary | - | - | %s | - |\n' "$total_seconds"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '=ci-meta=\tjob_started_at\tunknown\n'
+            duration() {
+              local start="$1" end="$2"
+              if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
+                printf '%s' "$((end - start))"
+              else
+                printf 'unknown'
+              fi
+            }
+            total_seconds=$(duration "${BUILD_PIPELINE_START:-}" "$now")
+            {
+              printf '| Step | Seconds | Source |\n'
+              printf '|---|---:|---|\n'
+              printf '| WASM build | %s | date markers |\n' "$(duration "${WASM_BUILD_START:-}" "${WASM_BUILD_END:-}")"
+              printf '| Web build | %s | date markers |\n' "$(duration "${WEB_BUILD_START:-}" "${WEB_BUILD_END:-}")"
+              printf '| Fixtures | %s | date markers |\n' "$(duration "${FIXTURES_START:-}" "${FIXTURES_END:-}")"
+              printf '| Web tests | %s | date markers |\n' "$(duration "${WEB_TESTS_START:-}" "${WEB_TESTS_END:-}")"
+              printf '| Simulation | %s | date markers |\n' "$(duration "${SIM_TESTS_START:-}" "${SIM_TESTS_END:-}")"
+              printf '| Playwright | %s | date markers |\n' "$(duration "${PLAYWRIGHT_START:-}" "${PLAYWRIGHT_END:-}")"
+              printf '| Total job to summary | %s | date markers |\n' "$total_seconds"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

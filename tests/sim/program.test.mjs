@@ -72,6 +72,12 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
       },
     );
     const wallElapsedMs = performance.now() - started;
+    if (process.env.FAKE_USB_TRACE === "1") {
+      const traceLines = `${child.stdout ?? ""}\n${child.stderr ?? ""}`
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("FAKE_USB_TRACE"));
+      if (traceLines.length > 0) process.stderr.write(`${traceLines.join("\n")}\n`);
+    }
     if (child.error?.code === "ETIMEDOUT") {
       return {
         exitCode: child.status ?? 1,
