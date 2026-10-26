@@ -36,7 +36,7 @@ const TRANSITIONS = [
   [TAP.idle, TAP.selectDr],
 ];
 
-const TRACE_ENABLED = process.env.FAKE_USB_TRACE === "1";
+const TRACE_ENABLED = globalThis.process?.env?.FAKE_USB_TRACE === "1";
 const TRACE_INSTRUCTIONS = new Set([0x0a, 0x13, 0x15, 0x3c, 0x71, 0x3a]);
 const TRACE_COUNTS = new Map();
 const FTDI_MAX_PACKET_SIZE = 512;
