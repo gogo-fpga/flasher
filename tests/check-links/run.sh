@@ -196,6 +196,7 @@ new_repo
 write_file docs/experiments/README.md 'placeholder directory
 '
 write_file .github/workflows/example.yml 'path: docs/experiments/YYYY-MM-DD-sNN-<short>.md
+template: docs/experiments/S<番号><英字>-<short>.md
 record: docs/experiments/README.md;
 pattern: docs/*
 '

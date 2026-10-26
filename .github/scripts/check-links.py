@@ -21,7 +21,7 @@ ALLOWLIST_PATH = ".github/link-check-allowlist.tsv"
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 ATX_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?)[ \t]*|[ \t]*)$")
 STALE_PATH_RE = re.compile(
-    r"(?<![\w.\-/])/?docs/[^\s`'\"()\[\]<>|,、。）]*"
+    r"(?<![\w.\-/])/?docs/[^\s`'\"()\[\]>|,、。）]*"
 )
 URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*:[^\s]+")
 SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
