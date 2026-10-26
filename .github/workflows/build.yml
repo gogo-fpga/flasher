@@ -1,0 +1,82 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Autotools をインストール
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool
+          autoconf --version | head -n 1
+          automake --version | head -n 1
+          libtoolize --version | head -n 1
+
+      - name: Node.js を設定
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: npm 依存を取得
+        run: npm ci
+
+      - name: Chromium をインストール
+        run: npx playwright install --with-deps chromium
+
+      - name: WASM をビルド
+        run: scripts/build-wasm.sh
+
+      - name: Web アプリを組み立て
+        run: scripts/build-web.sh
+
+      - name: テスト用ビットストリームを生成
+        run: tests/fixtures/build-fs.sh
+
+      - name: Web 単体テスト
+        run: node --test tests/web/*.test.mjs
+
+      - name: 仮想 USB シミュレーション
+        run: WASM_BUILD_ROOT=build node --test --test-concurrency=1 tests/sim/*.test.mjs
+
+      - name: Playwright E2E
+        run: npx playwright test
+
+      - name: 成果物の SHA-256 を記録
+        run: sha256sum build/jspi-pthread/*.wasm build/jspi-pthread/*.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Web 成果物を保存
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flasher-web-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+
+      - name: E2E 失敗資料を保存
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flasher-web-test-failures-${{ github.sha }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

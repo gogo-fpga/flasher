@@ -55,6 +55,14 @@ openFPGALoader を WASM 化した既存の例です。
 - 当初、タグを文字列の順で並べたため emsdk の最新を 6.0.9 と誤りました。`git ls-remote --tags --sort=-v:refname` で版の順に並べ直し、6.0.13 に直しました。
 - libftdi の http の取得元（`http://developer.intra2net.com/git/libftdi`）は dumb http のため shallow clone ができません（`dumb http transport does not support shallow capabilities`）。smart protocol の `git://` を使います。git:// は暗号化されませんが、superproject が固定する commit の SHA で中身を確かめられます。
 
+## CI の action と監査ツール
+
+- `actions/setup-node` v7.1.0 は `mise.toml` と絶対パスの `node-version-file` に対応し、Node.js 版の検証と manifest 再取得の再試行を加えました。ESM への移行と `NODE_AUTH_TOKEN` の動作も変更しました。この workflow は Node.js major を明示し、cache、`node-version-file`、認証 token を使わないため、追加設定は不要です。action の runtime は Node.js 24 です。
+- `actions/upload-artifact` v7.0.2 は HTTP 429 の再試行と `Retry-After` の処理を改善しました。成功時の Web 成果物と失敗時の Playwright 資料の保存に使います。
+- actionlint v1.7.12 は `on.schedule.timezone`、deployment environment、`macos-26-intel` の検査に対応し、webhook event 一覧と popular-action データも更新しました。Go 1.26 対応と Windows arm64 の CI は upstream の開発環境の変更です。この workflow は timezone と deployment environment を指定せず、Ubuntu runner を使うため、新しい設定項目は不要です。
+- zizmor 1.31.0 は pre-commit、self-hosted runner、危険な trigger、cache 設定、PowerShell の監査を改善し、`image_version` trigger に対応しました。また、誤検出の精度、submodule/worktree 内の設定探索、version comment の解析、pre-commit 入力、PowerShell の信頼済み publishing 検査を修正しました。この workflow 群は pre-commit、self-hosted runner、`image_version`、`issue_comment`、PowerShell、cache を使わず、標準の action version comment を使います。1.31.1 は `dangerous-triggers` の抑制コメントが適用されない回帰を修正しました。finding の抑制は設定しません。
+- 追加した actionlint、setup-node、upload-artifact、zizmor のライセンスは MIT です。zizmor の 1.31.1 wheel に Python の追加依存はなく、`.github/zizmor-requirements.txt` は公開配布物の SHA-256 を固定します。
+
 ## Emscripten のビルドオプション
 
 ### 出典
