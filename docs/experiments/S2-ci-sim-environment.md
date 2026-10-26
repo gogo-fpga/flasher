@@ -73,7 +73,19 @@ CPU 競合試験は `taskset -c 0` と `yes >/dev/null` 2個を使って3回実�
 
 3試行の中央値（最小–最大）は、1K 8,122.069 ms（8,033.997–8,160.454）、4K 10,264.541 ms（10,166.235–10,595.110）、9K 12,571.312 ms（12,518.921–12,626.180）、USB 切断 381.596 ms（368.575–407.421）、全体 31,410.498 ms（31,331.785–31,817.946）。
 
-Fake USB trace を有効にした3ボードの flash programming は3/3件成功した。15回の子プロセス実行から、`0x15`、`0x71`、`0x3a`、`0x3c` の IR load と `0x71` の DR update、TAP reset が記録された。Python 3.12 fixture を使ったこのローカル経路では `0x0a` の IR/DR と `0x13` の IR/read は観測されなかった。1K の直接実行結果も終了コード0で、命令数に `0x0a` と `0x13` は含まれない。CI の trace と fixture hash を取得するまでは、CI での実行経路や原因は確定しない。
+Fake USB trace を有効にした3ボードの flash programming は3/3件成功した。15回の子プロセス実行から、`0x15`、`0x71`、`0x3a`、`0x3c` の IR load と `0x71` の DR update、TAP reset が記録された。Python 3.12 fixture を使ったこのローカル経路では `0x0a` の IR/DR と `0x13` の IR/read は観測されなかった。1K の直接実行結果も終了コード0で、命令数に `0x0a` と `0x13` は含まれない。
+
+## CI trace と原因
+
+2026-10-26 の診断 CI では、4個の fixture hash が Python 3.12 の保存値とすべて一致した。WASM と `.mjs` の hash もローカル再現値に一致した。したがって、今回のログで観測した CRC 失敗は fixture やビルド成果物の差では説明できない。
+
+診断 CI trace では3ボードそれぞれで `0x13` の DR read が1回あり、いずれも `value=0x00000000 usercode=0x00000000` を返した。`0x0a` の IR/DR はなく、device state reset も観測されなかった。各テストはこの最初の CRC assertion で失敗して終了した。読み出し値は元のログの `Read: 0x00000000 checksum: ...` と一致する。
+
+原因は Fake USB の内部フラッシュ reload 状態が未実装だったこと。GW1N の `programFlash()` は `0x71` で内部フラッシュへ書き込み、`0x3c` の reload 後に CRC を検査する。`checkCRC()` が実行されると `0x13` からユーザーコードを読み取るが、Fake USB は従来、SRAM 書き込みの `0x0a` でしかユーザーコードを設定せず、`0x3c` reload では0のままだった。`skip_checksum` はクラス宣言で初期化されず、GW1N の family 検出でも設定されないため、`programFlash()` の `if (!skip_checksum && data)` による CRC 検査は実行環境の値に依存する。CI trace はその条件が成立し、`0x13` 読み出しまで到達したことを示す。ローカルで検査が観測されなかったことはこの分岐差と整合するが、CI とローカルで未初期化値そのものを観測したわけではない。
+
+Fake USB は、fixture から openFPGALoader と同じ手順で得た checksum を内部 flash reload 時に反映するよう変更した。vendor は変更していない。checksum parser の fixture 単体テストで1K/4K/9Kの期待値を確認し、対象の3 flash tests と USB disconnect test は5/5件成功した。全 simulation suite の再実行結果は後段に記録する。
+
+変更後の全シミュレーション suite は41/41件成功し、所要時間は429,458.670 ms。対象4テストは先行する絞り込み実行でも5/5件成功した。assertion と timeout、vendor code は変更していない。
 
 最初の trace 実装は 9K の子プロセスで `ENOBUFS` になった。DR read を `0x13` のみに絞り、`0x71` の DR update を先頭3件と8,192件ごとに記録する方式に変更した後は、3テストが通過し、ログは 1,748,834 bytes になった。生の測定値は [S2-ci-sim-environment.csv](S2-ci-sim-environment.csv) に記録した。
 

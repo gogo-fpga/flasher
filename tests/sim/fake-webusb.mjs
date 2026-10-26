@@ -80,9 +80,10 @@ const NOR_PHASES = Object.freeze({
 });
 
 class GowinTap {
-  constructor(idcode, faults) {
+  constructor(idcode, faults, flashUsercode) {
     this.idcode = idcode >>> 0;
     this.faults = faults;
+    this.flashUsercode = flashUsercode;
     this.heartbeatEnabled =
       typeof process !== "undefined" && process.env?.FAKE_USB_HEARTBEAT === "1";
     this.heartbeatStartedAt = Date.now();
@@ -199,7 +200,15 @@ class GowinTap {
       this.eflash.clear();
     }
     if (instruction === 0x71) this.eflashExpectAddress = true;
-    if (instruction === 0x3c) this.status |= 1 << 13;
+    if (instruction === 0x3c) {
+      this.status |= 1 << 13;
+      if (this.eflash.size > 0 && this.flashUsercode !== undefined) {
+        this.usercode = this.flashUsercode;
+        traceFakeUsb(
+          `usercode-set kind=internal-flash-reload value=${traceHex(this.usercode)}`,
+        );
+      }
+    }
   }
 
   registerValue() {
@@ -552,7 +561,7 @@ function stringDescriptor(value) {
 }
 
 class FakeUSBDevice {
-  constructor(idcode, faults) {
+  constructor(idcode, faults, flashUsercode) {
     this.vendorId = 0x0403;
     this.productId = 0x6010;
     this.manufacturerName = "Sipeed";
@@ -560,7 +569,7 @@ class FakeUSBDevice {
     this.serialNumber = "TN-S0-0001";
     this.opened = false;
     this.interfaceClaims = new Set();
-    this.tap = new GowinTap(idcode, faults);
+    this.tap = new GowinTap(idcode, faults, flashUsercode);
     this.faults = faults;
     this.mpsseInput = [];
     this.mpsseOutput = [];
@@ -815,8 +824,11 @@ export function packMpsseBitModeRead(bits, lsbFirst = true) {
   return packed;
 }
 
-export function createFakeUsb(idcode, { connected = true, faults = {} } = {}) {
-  const device = new FakeUSBDevice(idcode, faults);
+export function createFakeUsb(
+  idcode,
+  { connected = true, faults = {}, flashUsercode } = {},
+) {
+  const device = new FakeUSBDevice(idcode, faults, flashUsercode);
   return {
     device,
     usb: {

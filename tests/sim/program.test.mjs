@@ -6,6 +6,8 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { resolve } from "node:path";
 
+import { parseGowinFsChecksum } from "./fs-checksum.mjs";
+
 const repoRoot = resolve(import.meta.dirname, "../..");
 const runner = resolve(import.meta.dirname, "run-program.mjs");
 const buildRoot = resolve(process.env.WASM_BUILD_ROOT ?? "build");
@@ -41,6 +43,15 @@ function parseFsPayload(board, reverseByte = false) {
   }
   return Buffer.from(bytes);
 }
+
+test("Gowin fixture checksums match the expected configuration checksums", () => {
+  const checksums = ["tangnano1k", "tangnano4k", "tangnano9k"].map((board) =>
+    parseGowinFsChecksum(
+      readFileSync(resolve(repoRoot, "build/fixtures", `${board}.fs`), "ascii"),
+    ),
+  );
+  assert.deepEqual(checksums, [0xa9ee, 0x1042, 0xc5d5]);
+});
 
 function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {}) {
   const childEnv = { ...process.env };

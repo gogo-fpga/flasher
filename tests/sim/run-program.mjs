@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createFakeUsb } from "./fake-webusb.mjs";
+import { parseGowinFsChecksum } from "./fs-checksum.mjs";
 
 const [variant, idcodeHex, argsJson, faultsJson, inputFilesJson = "{}"] =
   process.argv.slice(2);
@@ -11,7 +12,12 @@ const idcode = Number.parseInt(idcodeHex, 16);
 const args = JSON.parse(argsJson);
 const faults = JSON.parse(faultsJson);
 const inputFiles = JSON.parse(inputFilesJson);
-const { device, usb } = createFakeUsb(idcode, { faults });
+const fixtureIndex = args.findIndex((argument) => argument.endsWith(".fs"));
+const fixtureBytes = fixtureIndex === -1 ? null : readFileSync(args[fixtureIndex]);
+const flashUsercode = fixtureBytes
+  ? parseGowinFsChecksum(fixtureBytes.toString("ascii"))
+  : undefined;
+const { device, usb } = createFakeUsb(idcode, { faults, flashUsercode });
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   writable: true,
@@ -27,9 +33,8 @@ try {
   for (const [path, bytes] of Object.entries(inputFiles)) {
     module.FS.writeFile(path, Uint8Array.from(bytes));
   }
-  const fixtureIndex = args.findIndex((argument) => argument.endsWith(".fs"));
   if (fixtureIndex !== -1) {
-    module.FS.writeFile("/fixture.fs", readFileSync(args[fixtureIndex]));
+    module.FS.writeFile("/fixture.fs", fixtureBytes);
     args[fixtureIndex] = "/fixture.fs";
   }
   const callMainResult = module.callMain(args);

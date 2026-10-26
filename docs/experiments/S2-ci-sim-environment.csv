@@ -25,3 +25,10 @@ local-trace,python312-fixture,1,trace log,1748834,bytes,true,17880 trace lines
 local-trace,tangnano1k,1,DR update 0x71,11180,updates,true,0x0a and 0x13 were absent
 local-trace,tangnano4k,1,DR update 0x71,37050,updates,true,0x0a and 0x13 were absent
 local-trace,tangnano9k,1,DR update 0x71,65715,updates,true,0x0a and 0x13 were absent
+ci,fixtures,1,hash matches,4,files,true,all Python 3.12 fixture hashes match CI
+ci,trace,1,0x13 DR reads,3,events,true,one zero usercode read per GW1N board
+ci,trace,1,0x0a IR or DR events,0,events,true,flash programming does not update usercode through SRAM instruction
+ci,trace,1,device state resets,0,events,true,no device reset observed before CRC reads
+ci,trace,1,diagnostic tests,3,failed,true,each first CRC assertion reads usercode zero
+local-fix,affected-sim-tests,1,pass count,5,tests,true,three flash tests USB disconnect and checksum parser
+local-fix,full-sim-suite,1,pass count,41,tests,true,duration 429458.670334 ms
