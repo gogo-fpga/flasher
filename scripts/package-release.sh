@@ -162,18 +162,24 @@ output.write_text(f"{json.dumps(data, indent=2, sort_keys=True)}\n", encoding="u
 PY
 chmod 644 "$source_root/RELEASE-SOURCE.json"
 
-tar \
-  --sort=name \
-  --mtime="@$SOURCE_DATE_EPOCH" \
-  --owner=0 \
-  --group=0 \
-  --numeric-owner \
-  --format=gnu \
-  --no-acls \
-  --no-selinux \
-  --no-xattrs \
-  -cf "$work/$source_name.tar" \
-  -C "$work" "$source_name"
+(
+  cd "$work"
+  find "$source_name" -print0 | LC_ALL=C sort -z > "$work/$source_name-files.list"
+  LC_ALL=C tar \
+    --sort=name \
+    --no-recursion \
+    --null \
+    --files-from="$work/$source_name-files.list" \
+    --mtime="@$SOURCE_DATE_EPOCH" \
+    --owner=0 \
+    --group=0 \
+    --numeric-owner \
+    --format=gnu \
+    --no-acls \
+    --no-selinux \
+    --no-xattrs \
+    -cf "$work/$source_name.tar"
+)
 TZ=UTC gzip -n -9 -c "$work/$source_name.tar" > "$release_dir/$source_archive"
 
 python3 - "$root" "$root/dist/build-info.json" "$release_dir/notes.md" "$version" \
