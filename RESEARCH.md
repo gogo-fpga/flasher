@@ -148,7 +148,9 @@ yowasp と apicula で作った 4 ボード用の `.fs` を、仮想 USB の SRA
 
 終了コードだけでは成否を判定できません。画面では、ログの `FAIL` も失敗として扱い、外付けフラッシュには `--verify` を付け、全体に時間の上限を設けます。内蔵フラッシュの busy は、Fake USB の MPSSE parser を修正する前は誤解析に隠れていました。2026年10月の修正後は、upstream が100回再試行して `FAIL` を表示し、終了コード0で終わることを確認しました。画面は `FAIL` を検出して失敗と表示します。
 
-GW1N の `Gowin::skip_checksum` は、`gowin.cpp` のコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも値が設定されません。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認します。この未初期化値により、内部フラッシュ書き込み後の CRC 確認は、残っているヒープ内容によって実行されたり省略されたりします。ローカルでは確認が省略され、CI では実行されました。実機の Tang Nano では試していません。vendor code は変更せず、upstream への報告は利用者の承認を待ちます。詳細は [段階 1a の記録](docs/experiments/S1a-program-sim.md) と [段階 2 の記録](docs/experiments/S2-ci-sim-environment.md) にあります。
+GW1N の `Gowin::skip_checksum` は、`gowin.cpp` のコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも値が設定されません。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認します。この未初期化値により、内部フラッシュ書き込み後の CRC 確認は、残っているヒープ内容によって実行されたり省略されたりします。ローカルでは確認が省略され、CI では実行されました。実機の Tang Nano では試していません。vendor code は変更せず、upstream への Issue は起票しません。詳細は [段階 1a の記録](docs/experiments/S1a-program-sim.md) と [段階 2 の記録](docs/experiments/S2-ci-sim-environment.md) にあります。
+
+2026-10-26: 利用者は upstream への Issue を起票しないと決めました。テストは CRC 行の出力を必須にせず、画面はログ中の `FAIL` を失敗として扱います。
 
 ### 段階 1b で分かったこと（最適化オプションの比較）
 
@@ -174,11 +176,11 @@ JSPI/pthread の基準 B（`-Os`、LTO なし、legacy の wasm 例外、固定 
 
 | 部品 | ライセンス | 配布で必要なこと |
 |---|---|---|
-| openFPGALoader | Apache-2.0 | LICENSE と NOTICE の同梱 |
-| libusb | LGPL-2.1-or-later | 静的リンクなので、ソースと再リンクの手段を提供する |
+| openFPGALoader | Apache-2.0 | [LICENSE](LICENSE)、[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を同梱 |
+| libusb | LGPL-2.1-or-later | 静的リンク。ソースと再リンク方法を [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
 | libftdi | LGPL-2.1（ライブラリ部分） | 同上 |
-| zlib | zlib | 表示の保持 |
-| Emscripten のランタイム | MIT / University of Illinois/NCSA | 表示の同梱 |
+| zlib | zlib | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
+| Emscripten のランタイムと libc | MIT / University of Illinois/NCSA。LLVM 部品は Apache-2.0 with LLVM Exceptions | ライセンス本文と固定版は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
 
 ## 未確認事項
 

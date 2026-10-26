@@ -16,6 +16,7 @@ SUBMODULES = (
     "vendor/yomiyasu",
     "vendor/zlib",
 )
+RELEASE_SOURCE_KEYS = {"version", "commit", "submodule_shas", "emsdk_version"}
 
 
 def run_git(root, *args):
@@ -28,6 +29,44 @@ def run_git(root, *args):
     return result.stdout.rstrip("\n")
 
 
+def release_source_data(root):
+    if (root / ".git").exists():
+        return None
+    manifest = root / "RELEASE-SOURCE.json"
+    if not manifest.is_file():
+        return None
+    try:
+        data = json.loads(manifest.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not read release-source metadata {manifest}: {error}") from error
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Release-source metadata must be a JSON object: {manifest}")
+    missing = sorted(RELEASE_SOURCE_KEYS - set(data))
+    if missing:
+        raise RuntimeError(
+            f"Release-source metadata is missing required keys: {', '.join(missing)}"
+        )
+    if not isinstance(data["version"], str) or not data["version"].strip():
+        raise RuntimeError("Release-source metadata version must be a non-empty string")
+    if not isinstance(data["commit"], str) or len(data["commit"]) != 40:
+        raise RuntimeError("Release-source metadata commit must be a 40-character SHA")
+    if not isinstance(data["emsdk_version"], str) or not data["emsdk_version"].strip():
+        raise RuntimeError("Release-source metadata emsdk_version must be a non-empty string")
+    versions = data["submodule_shas"]
+    if not isinstance(versions, dict) or set(versions) != set(SUBMODULES):
+        raise RuntimeError(
+            "Release-source metadata submodule_shas paths do not match required submodules"
+        )
+    if any(
+        not isinstance(sha, str)
+        or len(sha) != 40
+        or any(char not in "0123456789abcdef" for char in sha)
+        for sha in versions.values()
+    ):
+        raise RuntimeError("Release-source metadata contains an invalid submodule SHA")
+    return data
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with path.open("rb") as contents:
@@ -37,6 +76,9 @@ def sha256_file(path):
 
 
 def submodule_shas(root):
+    release_source = release_source_data(root)
+    if release_source is not None:
+        return release_source["submodule_shas"]
     output = run_git(root, "submodule", "status", "--", *SUBMODULES)
     versions = {}
     for line in output.splitlines():
@@ -60,13 +102,20 @@ def submodule_shas(root):
     return versions
 
 
-def emcc_version(root):
-    version = run_git(
+def emsdk_version(root):
+    release_source = release_source_data(root)
+    if release_source is not None:
+        return release_source["emsdk_version"]
+    return run_git(
         root / "vendor/emsdk",
         "describe",
         "--tags",
         "--exact-match",
     )
+
+
+def emcc_version(root):
+    version = emsdk_version(root)
     sdk_root = root / "build" / f"emsdk-{version}"
     env_script = sdk_root / "emsdk_env.sh"
     if not env_script.is_file():
@@ -146,6 +195,9 @@ def check_build_info(root, artifacts):
 
 
 def submodule_gitlinks(root):
+    release_source = release_source_data(root)
+    if release_source is not None:
+        return release_source["submodule_shas"]
     output = run_git(root, "ls-tree", "HEAD", "--", *SUBMODULES)
     versions = {}
     for line in output.splitlines():
@@ -220,6 +272,8 @@ def main():
     root = args.root.resolve()
     artifacts = args.artifacts.resolve()
     try:
+        if release_source_data(root) is not None:
+            print("Release-source mode is on.")
         if args.action == "write":
             if args.variant is None or args.async_mode is None:
                 parser.error("write requires --variant and --async-mode")

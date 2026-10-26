@@ -41,6 +41,12 @@ python3 serve.py --port 8000
 
 openFPGALoader の終了コードだけでは成否を判定できません。画面はログに `FAIL` がある場合も失敗と判定します。内蔵フラッシュの消去中に busy が続くと、upstream は100回再試行して `FAIL` を表示し、終了コード0で終わります。この結果も画面では失敗です。
 
+## Release zip の使い方
+
+GitHub Releases から `flasher-web-<version>.zip` をダウンロードして展開し、展開したディレクトリーで `python3 serve.py` を実行します。表示された URL を Chrome または Edge で開いてください。
+
+実機の Tang Nano では試していません。
+
 ## ソースからのビルド
 
 ```sh
@@ -63,4 +69,4 @@ python3 dist/serve.py --port 8000
 
 ## ライセンス
 
-部品ごとのライセンスと配布の条件は [RESEARCH.md](RESEARCH.md#ライセンス) にまとめています。WASM には LGPL-2.1 の libusb と libftdi を静的にリンクしています。`vendor/` の submodule は、それぞれのライセンスに従います。
+本リポジトリーは Apache-2.0 で公開しています。配布部品のライセンス、固定版、LGPL ライブラリの再リンク方法は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。ライセンス本文は Release zip の `licenses/` に同梱します。

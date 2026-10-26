@@ -81,7 +81,7 @@ Fake USB trace を有効にした3ボードの flash programming は3/3件成功
 
 最初の診断では、`0x13` の読み戻し値が0で、Fake USB の内部フラッシュ reload 状態が未実装であることを原因と考えた。この仮説は誤りだった。後続 trace で `0x3c` reload 後の usercode と `0x13` 応答 bytes が正しいと分かり、残っている応答 queue の方が不一致の原因だと判明した。
 
-GW1N の `Gowin::skip_checksum` はコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも設定されない。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認するため、未初期化値により CRC 検査の有無が実行環境で変わる。ローカルでは検査が省略され、CI では実行された。これは実行経路の差を説明するが、読み出し不一致の直接原因ではない。vendor code は変更していない。実機の Tang Nano では試しておらず、upstream への報告は利用者の承認を待つ。
+GW1N の `Gowin::skip_checksum` はコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも設定されない。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認するため、未初期化値により CRC 検査の有無が実行環境で変わる。ローカルでは検査が省略され、CI では実行された。これは実行経路の差を説明するが、読み出し不一致の直接原因ではない。vendor code は変更していない。実機の Tang Nano では試しておらず、利用者は upstream への Issue を起票しないと決めた。
 
 ## 根本原因と修正
 

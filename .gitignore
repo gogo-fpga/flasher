@@ -1,5 +1,6 @@
 /build/
 /dist/
+/release/
 /node_modules/
 __pycache__/
 /playwright-report/
