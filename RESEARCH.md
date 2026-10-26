@@ -174,11 +174,11 @@ JSPI/pthread の基準 B（`-Os`、LTO なし、legacy の wasm 例外、固定 
 
 | 部品 | ライセンス | 配布で必要なこと |
 |---|---|---|
-| openFPGALoader | Apache-2.0 | LICENSE と NOTICE の同梱 |
-| libusb | LGPL-2.1-or-later | 静的リンクなので、ソースと再リンクの手段を提供する |
+| openFPGALoader | Apache-2.0 | [LICENSE](LICENSE)、[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を同梱 |
+| libusb | LGPL-2.1-or-later | 静的リンク。ソースと再リンク方法を [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
 | libftdi | LGPL-2.1（ライブラリ部分） | 同上 |
-| zlib | zlib | 表示の保持 |
-| Emscripten のランタイム | MIT / University of Illinois/NCSA | 表示の同梱 |
+| zlib | zlib | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
+| Emscripten のランタイムと libc | MIT / University of Illinois/NCSA。LLVM 部品は Apache-2.0 with LLVM Exceptions | ライセンス本文と固定版は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載 |
 
 ## 未確認事項
 

@@ -1,0 +1,6 @@
+GOGO-FPGA flasher
+Copyright 2026 The GOGO-FPGA flasher Authors
+
+This product includes openFPGALoader, licensed under Apache-2.0. Its copyright
+source headers identify Gwenhael Goavec-Merou as a copyright holder.
+Other included components are listed in THIRD_PARTY_NOTICES.md.

@@ -136,18 +136,46 @@ fi
 
 mkdir -p "$out"
 exec > >(tee "$out/build.log") 2>&1
+release_source_mode=false
+if [[ ! -e "$root/.git" && -f "$root/RELEASE-SOURCE.json" ]]; then
+  release_source_mode=true
+  printf 'Release-source mode is on.\n'
+fi
 set -x
 
 jobs="${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 prefix="$out/prefix"
-source_date_epoch="$(git -C "$root" log -1 --format=%ct)"
+if [[ "$release_source_mode" == true ]]; then
+  release_source_values="$(python3 - "$root/RELEASE-SOURCE.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as manifest_file:
+    manifest = json.load(manifest_file)
+epoch = manifest.get("source_date_epoch")
+version = manifest.get("emsdk_version")
+if not isinstance(epoch, int) or epoch < 0:
+    raise SystemExit("release-source source_date_epoch must be a non-negative integer")
+if not isinstance(version, str) or not version:
+    raise SystemExit("release-source emsdk_version must be a non-empty string")
+print(f"{epoch}\t{version}")
+PY
+)"
+  IFS=$'\t' read -r source_date_epoch emsdk_version <<< "$release_source_values"
+else
+  source_date_epoch="$(git -C "$root" log -1 --format=%ct)"
+  emsdk_version="$(git -C "$root/vendor/emsdk" describe --tags --exact-match)"
+fi
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 
-emsdk_version="$(git -C "$root/vendor/emsdk" describe --tags --exact-match)"
 emsdk_root="$root/build/emsdk-$emsdk_version"
 if [[ ! -x "$emsdk_root/emsdk" ]]; then
   mkdir -p "$emsdk_root"
-  git -C "$root/vendor/emsdk" archive HEAD | tar -x -C "$emsdk_root"
+  if [[ "$release_source_mode" == true ]]; then
+    cp -R "$root/vendor/emsdk/." "$emsdk_root/"
+  else
+    git -C "$root/vendor/emsdk" archive HEAD | tar -x -C "$emsdk_root"
+  fi
 fi
 "$emsdk_root/emsdk" install "$emsdk_version"
 "$emsdk_root/emsdk" activate "$emsdk_version"
@@ -239,7 +267,11 @@ emmake make -C "$out/zlib-build" install
 libusb_source="$out/libusb-source"
 libusb_build="$out/libusb-build"
 mkdir -p "$libusb_source" "$libusb_build"
-git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
+if [[ "$release_source_mode" == true ]]; then
+  cp -R "$root/vendor/libusb/." "$libusb_source/"
+else
+  git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
+fi
 (
   cd "$libusb_source"
   ./bootstrap.sh
