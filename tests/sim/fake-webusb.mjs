@@ -728,6 +728,11 @@ class FakeUSBDevice {
     }
     if (output.length === 0) output.push(0x01, 0x60);
     this.tap.maybeHeartbeat();
+    if (this.tap.instruction === 0x13) {
+      traceFakeUsb(
+        `usb-in instruction=0x13 endpoint=${endpoint} length=${output.length} bytes=${output.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+      );
+    }
     return { status: "ok", data: descriptorView(output, length) };
   }
 
