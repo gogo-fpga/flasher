@@ -1,5 +1,3 @@
-import { buildArgs } from "./lib/build-args.mjs";
-
 self.addEventListener("message", async ({ data }) => {
   const sendLog = (stream) => (text) => {
     self.postMessage({ type: "log", stream, text: String(text) });
@@ -17,14 +15,13 @@ self.addEventListener("message", async ({ data }) => {
       print: stdout,
       printErr: stderr,
     });
-    const fileBytes = new Uint8Array(await data.file.arrayBuffer());
-    module.FS.writeFile("/input.fs", fileBytes);
+    for (const file of data.files ?? []) {
+      module.FS.writeFile(file.path, new Uint8Array(file.bytes));
+    }
 
     let exitCode = 0;
     try {
-      const result = await module.callMain(
-        buildArgs({ board: data.board, target: data.target }),
-      );
+      const result = await module.callMain(data.args);
       if (typeof result === "number") {
         exitCode = result;
       }
@@ -36,7 +33,11 @@ self.addEventListener("message", async ({ data }) => {
       }
     }
 
-    self.postMessage({ type: "done", exitCode });
+    const outputs = (data.outputs ?? []).map((path) => ({
+      path,
+      bytes: module.FS.readFile(path),
+    }));
+    self.postMessage({ type: "done", exitCode, outputs });
   } catch (error) {
     self.postMessage({
       type: "error",

@@ -36,12 +36,50 @@ const TRANSITIONS = [
   [TAP.idle, TAP.selectDr],
 ];
 
+const NOR_PHASES = Object.freeze({
+  0x01: "nor-write-status",
+  0x02: "nor-page-program",
+  0x03: "nor-read",
+  0x05: "nor-status",
+  0x06: "nor-write-enable",
+  0x09: "nor-read-status",
+  0x20: "nor-sector-erase",
+  0x52: "nor-block-erase",
+  0x9f: "nor-read-id",
+  0xc7: "nor-chip-erase",
+  0xd8: "nor-block-erase",
+});
+
 class GowinTap {
   constructor(idcode, faults) {
     this.idcode = idcode >>> 0;
     this.faults = faults;
-    this.externalFlash = this.idcode === 0x0000081b;
-    this.nor = this.externalFlash ? new Uint8Array(8 * 1024 * 1024).fill(0xff) : null;
+    this.heartbeatEnabled =
+      typeof process !== "undefined" && process.env?.FAKE_USB_HEARTBEAT === "1";
+    this.heartbeatStartedAt = Date.now();
+    this.lastHeartbeatAt = this.heartbeatStartedAt;
+    this.mpsseBytesConsumed = 0;
+    this.lastSpiOpcode = null;
+    this.lastSpiAddress = null;
+    this.phase = "idle";
+    const maskedIdcode = this.idcode & 0x0fffffff;
+    // Mirrors the GW1N BSCAN route selected after CONFIG_ENABLE and IR 0x3d; see gowin.cpp:63-75,187-194,983-986,1053-1083.
+    this.spiPins = maskedIdcode === 0x0100981b
+      ? { clock: 0x80, select: 0x20, input: 0x08, output: 0x02 }
+      : { clock: 0x02, select: 0x08, input: 0x20, output: 0x80 };
+    const flashSize = maskedIdcode === 0x0000081b
+      ? 8 * 1024 * 1024
+      : [0x0100981b, 0x0100481b].includes(maskedIdcode)
+        ? 4 * 1024 * 1024
+        : 0;
+    this.externalFlash = flashSize > 0;
+    this.nor = this.externalFlash ? new Uint8Array(flashSize).fill(0xff) : null;
+    this.norStatus = faults.protectedNor ? 0x1c : 0;
+    if (this.nor && faults.norSeed) {
+      const offset = faults.norSeed.offset ?? 0;
+      const bytes = Uint8Array.from(faults.norSeed.bytes ?? []);
+      this.nor.set(bytes, offset);
+    }
     this.sram = [];
     this.eflash = new Map();
     this.spiCommands = [];
@@ -49,10 +87,19 @@ class GowinTap {
     this.instructionCounts = new Map();
     this.statusReads = [];
     this.spiReadTrace = [];
+    this.configEnabled = false;
+    this.bscanPins = this.spiPins.select;
+    this.bscanSelected = false;
+    this.bscanClockHigh = false;
+    this.bscanBytes = [];
+    this.bscanBitCount = 0;
+    this.bscanCurrentByte = 0;
+    this.bscanMiso = 0;
     this.wel = false;
     this.norBusy = false;
     this.norBusyPolls = 0;
     this.readCorrupted = false;
+    this.readCorruptedAt = null;
     this.disconnectAfter = faults.disconnectAfter ?? Infinity;
     this.transferCount = 0;
     this.reset();
@@ -67,6 +114,14 @@ class GowinTap {
     this.eflashErasePending = false;
     this.usercode = 0;
     this.drInputBits = [];
+    this.configEnabled = false;
+    this.bscanPins = this.spiPins.select;
+    this.bscanSelected = false;
+    this.bscanClockHigh = false;
+    this.bscanBytes = [];
+    this.bscanBitCount = 0;
+    this.bscanCurrentByte = 0;
+    this.bscanMiso = 0;
     this.spiOutputBits = [];
     this.spiOutputIndex = 0;
     this.spiPrepared = false;
@@ -74,12 +129,21 @@ class GowinTap {
 
   setInstruction(instruction) {
     this.instruction = instruction & 0xff;
+    if (instruction === 0x15) this.phase = "config-enable";
+    else if (instruction === 0x3d) this.phase = "bscan-spi";
+    else if (instruction === 0x16) this.phase = "jtag-spi";
     this.instructionCounts.set(
       this.instruction,
       (this.instructionCounts.get(this.instruction) ?? 0) + 1,
     );
-    if (instruction === 0x15) this.status |= 1 << 7;
-    if (instruction === 0x3a) this.status &= ~(1 << 7);
+    if (instruction === 0x15) {
+      this.configEnabled = true;
+      this.status |= 1 << 7;
+    }
+    if (instruction === 0x3a) {
+      this.configEnabled = false;
+      this.status &= ~(1 << 7);
+    }
     if (instruction === 0x05) {
       this.status &= ~((1 << 13) | (1 << 5));
       this.status |= 1 << 5;
@@ -108,6 +172,9 @@ class GowinTap {
       return this.status;
     }
     if (this.instruction === 0x13) return this.usercode;
+    if (this.instruction === 0x3d && this.bscanMiso) {
+      return this.spiPins.output;
+    }
     return 0;
   }
 
@@ -146,18 +213,27 @@ class GowinTap {
   spiTransaction(input) {
     if (input.length === 0) return [];
     const command = input[0];
+    this.lastSpiOpcode = command;
     this.spiCommandCounts.set(command, (this.spiCommandCounts.get(command) ?? 0) + 1);
     this.spiCommands.push(input.slice(0, 8));
     if (this.spiCommands.length > 40) this.spiCommands.shift();
     const response = new Array(input.length).fill(0);
     const address = ((input[1] ?? 0) << 16) | ((input[2] ?? 0) << 8) | (input[3] ?? 0);
+    if ([0x02, 0x03, 0x0b, 0x20, 0x52, 0xd8].includes(command) && input.length >= 4) {
+      this.lastSpiAddress = address;
+    }
+    this.phase = NOR_PHASES[command]
+      ?? `nor-opcode-0x${command.toString(16).padStart(2, "0")}`;
     if (command === 0x9f) {
       response[1] = 0xef;
       response[2] = 0x40;
-      response[3] = 0x17;
+      response[3] = this.nor.length === 4 * 1024 * 1024 ? 0x16 : 0x17;
     } else if (command === 0x05) {
       const status = (this.faults.norBusyForever || this.norBusy ? 1 : 0)
-        | (this.wel ? 2 : 0);
+        | (this.wel ? 2 : 0)
+        | this.norStatus;
+      this.lastNorStatus = status;
+      this.phase = (status & 1) === 1 ? "nor-status-wip" : "nor-status-ready";
       for (let index = 1; index < response.length; index += 1) {
         response[index] = status;
       }
@@ -168,6 +244,9 @@ class GowinTap {
     } else if (command === 0x06) {
       this.wel = true;
     } else if (command === 0x04) {
+      this.wel = false;
+    } else if (command === 0x01 && this.wel) {
+      this.norStatus = (input[1] ?? 0) & 0xfc;
       this.wel = false;
     } else if ((command === 0x20 || command === 0xd8) && this.wel) {
       const size = command === 0xd8 ? 0x10000 : 0x1000;
@@ -197,6 +276,104 @@ class GowinTap {
       this.norBusyPolls = 1;
     }
     return response;
+  }
+
+  maybeHeartbeat() {
+    if (!this.heartbeatEnabled) return;
+    const now = Date.now();
+    if (now - this.lastHeartbeatAt < 10_000) return;
+    this.lastHeartbeatAt = now;
+    const hex = (value, width = 2) =>
+      value === null ? null : `0x${value.toString(16).padStart(width, "0")}`;
+    const heartbeat = `FAKE_USB_HEARTBEAT ${JSON.stringify({
+        elapsedMs: now - this.heartbeatStartedAt,
+        mpsseBytesConsumed: this.mpsseBytesConsumed,
+        lastSpiOpcode: hex(this.lastSpiOpcode),
+        lastSpiAddress: hex(this.lastSpiAddress, 6),
+        norStatus: hex(this.lastNorStatus ?? this.norStatus),
+        wip: Boolean(this.faults.norBusyForever || this.norBusy || (this.norStatus & 1)),
+        norBusyPolls: this.norBusyPolls,
+        phase: this.phase,
+        instruction: hex(this.instruction),
+        bscanSelected: this.bscanSelected,
+        bscanBitCount: this.bscanBitCount,
+      })}\n`;
+    process.stderr.write(heartbeat);
+    const heartbeatFile = process.env?.FAKE_USB_HEARTBEAT_FILE;
+    if (heartbeatFile && typeof process.getBuiltinModule === "function") {
+      process.getBuiltinModule("node:fs").appendFileSync(heartbeatFile, heartbeat);
+    }
+  }
+
+  bscanReadBit() {
+    const command = this.bscanBytes[0];
+    const byteIndex = this.bscanBytes.length;
+    if (command === 0x9f) {
+      const id = this.nor.length === 4 * 1024 * 1024 ? [0xef, 0x40, 0x16] : [0xef, 0x40, 0x17];
+      return ((id[byteIndex - 1] ?? 0) >>> (7 - (this.bscanBitCount & 7))) & 1;
+    }
+    if (command === 0x05) {
+      if (this.norBusy && !this.faults.norBusyForever && this.norBusyPolls > 0) {
+        this.norBusyPolls -= 1;
+        if (this.norBusyPolls === 0) this.norBusy = false;
+      }
+      const status = (this.faults.norBusyForever || this.norBusy ? 1 : 0)
+        | (this.wel ? 2 : 0)
+        | this.norStatus;
+      return (status >>> (7 - (this.bscanBitCount & 7))) & 1;
+    }
+    if (command === 0x03 && byteIndex >= 4) {
+      const address = ((this.bscanBytes[1] ?? 0) << 16)
+        | ((this.bscanBytes[2] ?? 0) << 8)
+        | (this.bscanBytes[3] ?? 0);
+      let value = this.nor[(address + byteIndex - 4) % this.nor.length];
+      if (this.faults.corruptNorReadback && !this.readCorrupted) {
+        value ^= 1 << (7 - (this.bscanBitCount & 7));
+        this.readCorrupted = true;
+        this.readCorruptedAt = {
+          address: (address + byteIndex - 4) % this.nor.length,
+          bit: this.bscanBitCount & 7,
+          elapsedMs: Date.now() - this.heartbeatStartedAt,
+        };
+      }
+      return (value >>> (7 - (this.bscanBitCount & 7))) & 1;
+    }
+    return 0;
+  }
+
+  updateBscanRegister(byte) {
+    if (!this.configEnabled) return;
+    const selected = (byte & this.spiPins.select) === 0;
+    const clockHigh = Boolean(byte & this.spiPins.clock);
+    if (!this.bscanSelected && selected) {
+      this.bscanBytes = [];
+      this.bscanBitCount = 0;
+      this.bscanCurrentByte = 0;
+    }
+    if (this.bscanSelected && selected && !clockHigh) {
+      this.bscanMiso = this.bscanReadBit();
+    }
+    if (this.bscanSelected && selected && !this.bscanClockHigh && clockHigh) {
+      this.bscanCurrentByte = (this.bscanCurrentByte << 1)
+        | (Boolean(byte & this.spiPins.input) ? 1 : 0);
+      this.bscanBitCount += 1;
+      if ((this.bscanBitCount & 7) === 0) {
+        this.bscanBytes.push(this.bscanCurrentByte);
+        this.bscanCurrentByte = 0;
+      }
+    }
+    if (this.bscanSelected && !selected) {
+      if (this.bscanBitCount > 0 && (this.bscanBitCount & 7) === 0) {
+        this.spiTransaction(this.bscanBytes);
+      }
+      this.bscanBytes = [];
+      this.bscanBitCount = 0;
+      this.bscanCurrentByte = 0;
+      this.bscanMiso = 0;
+    }
+    this.bscanPins = byte;
+    this.bscanSelected = selected;
+    this.bscanClockHigh = clockHigh;
   }
 
   shiftedBytes() {
@@ -240,6 +417,8 @@ class GowinTap {
         bytes.push(byte);
       }
       this.spiTransaction(bytes);
+    } else if (this.instruction === 0x3d && bytes.length === 1) {
+      this.updateBscanRegister(bytes[0]);
     }
     this.drInputBits = [];
     this.spiPrepared = false;
@@ -255,7 +434,7 @@ class GowinTap {
         tdo = this.drShift & 1;
         this.drShift = (this.drShift >>> 1) | ((tdi & 1) << 31);
       }
-      if ([0x16, 0x17, 0x0a, 0x08, 0x71].includes(this.instruction)) {
+      if ([0x16, 0x17, 0x0a, 0x08, 0x71, 0x3d].includes(this.instruction)) {
         this.drInputBits.push(tdi & 1);
       }
     } else if (this.state === TAP.shiftIr) {
@@ -432,9 +611,12 @@ class FakeUSBDevice {
     if (![2, 4, 0x02, 0x04].includes(endpoint)) {
       return { status: "stall", bytesWritten: 0 };
     }
-    this.mpsseInput.push(...asBytes(data));
+    const bytes = asBytes(data);
+    this.tap.mpsseBytesConsumed += bytes.byteLength;
+    this.mpsseInput.push(...bytes);
     this.consumeMpsse();
-    return { status: "ok", bytesWritten: asBytes(data).byteLength };
+    this.tap.maybeHeartbeat();
+    return { status: "ok", bytesWritten: bytes.byteLength };
   }
 
   async transferIn(endpoint, length) {
@@ -453,6 +635,7 @@ class FakeUSBDevice {
       output.push(...this.mpsseOutput.splice(0, count));
     }
     if (output.length === 0) output.push(0x01, 0x60);
+    this.tap.maybeHeartbeat();
     return { status: "ok", data: descriptorView(output, length) };
   }
 

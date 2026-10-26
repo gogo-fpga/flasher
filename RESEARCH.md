@@ -169,3 +169,49 @@ JSPI/pthread の基準 B（`-Os`、LTO なし、legacy の wasm 例外、固定 
 
 - 実機（4 ボード）での書き込み。
 - JSPI 版の、Chrome・Edge の実機の WebUSB での動作。
+
+## 高度な設定と Gowin の動作
+
+以下は `vendor/openFPGALoader` v1.2.0 の Gowin 実装を確認した結果です。既定値は Tang Nano 各ボードを `-b` で指定した場合の値です。
+
+| オプション | 既定値 | 適用対象 | 効果と注意点 | upstream の根拠 | UI |
+|---|---|---|---|---|---|
+| `-m/--write-sram`、`-f/--write-flash` | SRAM | 書き込み | SRAM は揮発性。フラッシュ書き込みは永続データを消去してから書き込む。1K/4K/9K は内蔵フラッシュ、20K は外付けフラッシュを使う。 | `main.cpp:1005-1022,1135-1148`、`gowin.cpp:196-217,273-320` | 公開。操作と書き込み先で選択 |
+| `--external-flash` | 無効 | 4K/9K の外付けフラッシュ書き込みと読み出し | 外付け SPI フラッシュを選択する。20K は Gowin 側が外付けを自動選択するため不要。 | `main.cpp:991-993,1141-1148`、`gowin.cpp:196-217,342-351,1176-1192` | 公開。20K では追加しない |
+| `--verify` | 無効 | 外付けフラッシュ書き込み | SPI フラッシュへの書き込み後に読み戻して比較する。SRAM と内蔵フラッシュでは検証されない。 | `main.cpp:1050-1051`、`gowin.cpp:304-305,342-370`、`spiFlash.cpp:559-597` | 公開。外付け書き込みでは既定で有効 |
+| `-o/--offset` | 0 バイト | 外付け書き込み、読み出し | 外付けフラッシュの開始位置をバイトで指定する。0 は既定値のため省略する。 | `main.cpp:1021-1022,682-687`、`gowin.cpp:342-367,1176-1192` | 公開。容量と読み書き範囲を検証 |
+| `--unprotect-flash` | 無効 | 外付けフラッシュ書き込み | 書き込み前に SPI フラッシュの保護ビットを解除する。保護状態を変えるため、必要な場合だけ使う。 | `main.cpp:1041-1042`、`gowin.cpp:342-351`、`spiFlash.cpp:827-848` | 公開。消去操作では無効 |
+| `--bulk-erase` | 無効 | 20K の外付け SPI フラッシュ | チップ全体を消去する。対象の Gowin 実装では GW2A のみ対応。bulk erase 側は `SPIFlash` に unprotect を渡さないため、`--unprotect-flash` と組み合わせても保護を解除できない。 | `main.cpp:980-982,649-652`、`gowin.hpp:44-47`、`flashInterface.cpp:149-177` | 公開。実行前にボード名と全消去を確認 |
+| `--dump-flash --file-size N` | 無効、サイズ 0 | 外付け SPI フラッシュの読み出し | `N` バイトを読み出す。4K/9K では `--external-flash` も指定する。出力先は positional file 引数。`--offset` は読み出し開始位置。読み出し後にビットストリームを再ロードする。 | `main.cpp:980,991-996,682-687`、`gowin.cpp:1176-1192` | 公開。全体または指定バイト数を選択し、長さを確認して保存 |
+| `--freq <Hz>` | 6 MHz | SRAM、フラッシュ | JTAG の初期周波数を設定する。Gowin はフラッシュ処理中に 2.5 MHz または 10 MHz へ切り替える。 | `main.cpp:73,231-250,1004`、`gowin.cpp:282,1248` | 公開。周波数切替の説明を表示 |
+| `-r/--reset` | 無効 | 全操作 | 指定すると `main.cpp` は処理後に `fpga->reset()` を呼ぶ。Gowin の `reset()` は RELOAD/NOOP を送り、外付けフラッシュの読み出し・一括消去では `post_flash_access()` も `reset()` を呼ぶ。 | `main.cpp:690-691,1031-1032`、`gowin.cpp:267-271,1176-1192,1220-1271`、`flashInterface.cpp:149-177` | 公開。書き込み時のみ選択可能。読み出し・消去は処理内で reset を実行するため、追加の reset を選べない。SRAM 書き込み後の影響を警告 |
+| `-v/--verbose`、`--verbose-level` | 通常ログ、level 0 | 全操作 | `-v` は詳細ログ、`--verbose-level 2` は debug。プログラム動作自体は変えない。 | `main.cpp:1029-1048` | 公開。既定、詳細、debug を選択 |
+| `--mcufw <file>` | 未指定 | 4K、フラッシュ書き込み、内蔵フラッシュ | GW1NSR-4C で MCU ファームウェアを消去領域の `0x380` ページから書き込む。書き込み位置は `writeFLASH()` のページ番号で、実アドレスはページ単位に展開される。 | `gowin.cpp:141-153,290-313,647-658`、`main.cpp:1058-1059` | 公開。4K の内蔵フラッシュ書き込み時のみ有効 |
+| `--user-flash <file>` | 未指定 | 9K、フラッシュ書き込み、内蔵フラッシュ | GW1N(R)-9 のユーザーデータを `0x6D0` ページから書き込む。upstream は書き込み時にビット反転を行う。 | `gowin.cpp:155-167,297-320,647-680`、`main.cpp:1068-1069` | 公開。9K の内蔵フラッシュ書き込み時のみ有効 |
+| `--protect-flash <len>` | 0（無効） | 対象ボードでは非対応 | Gowin の該当実装は保護要求をエラーにする。 | `main.cpp:1027-1028,654-656`、`gowin.hpp:37-39` | 表示のみ。未対応の理由を示して無効化 |
+
+外付けフラッシュへのアクセスでは、Tang Nano 4K/9K の GW1N と Tang Nano 20K の GW2A のどちらも `prepare_flash_access()` が先に SRAM を消去します。GW1N は続けて設定モードへ入り、GW2A はその切り替えを行いません。読み出しと一括消去は `prepare_flash_access()` と `post_flash_access()` を通ります。後者は両系列で `reset()` を呼び、`reset()` が RELOAD/NOOP を送ります。したがって、操作中は SRAM 上のデザインが停止し、処理後にフラッシュから再ロードされます。根拠は `gowin.cpp:267-271,1176-1192,1220-1271`、`gowin.hpp:44-47`、`flashInterface.cpp:149-177` です。
+
+Tang Nano のフラッシュ容量は次のとおりです。1K は外付けフラッシュを搭載せず、パッドのみです。4K と 9K は 32 Mbit（4 MiB）、20K は 64 Mbit（8 MiB）の SPI フラッシュを搭載し、20K に内蔵フラッシュはありません。
+
+- Sipeed Wiki の比較表（1K/4K/9K/20K）：https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-9K/Nano-9K.html
+- Sipeed Wiki の Tang Nano 20K ページ：https://wiki.sipeed.com/hardware/en/tang/Tang-Nano-20K/Nano-20K.html
+
+### Fake の GW1N 外付け SPI 経路
+
+GW1N の `prepare_flash_access()` は SRAM を消去し、IR `0x15` で設定モードに入り、IR `0x3D` に切り替えて SPI アクセスを準備します。以降の8ビット `shiftDR` が BSCAN のピン状態を設定し、6クロックを経て更新されます。`spi_put()` は CS を下げ、MOSI を MSB から送り、SCLK の立ち上がりごとに TDO の DO ビットを読み、最後に CS を上げる関数です。Fake はこの手順をデコードして、20K と共通の NOR コマンドモデルへ渡します。根拠は `gowin.cpp:233-237,455-459,983-986,1053-1083,1220-1250` と、信号マスク `gowin.cpp:63-75,187-194` です。
+
+Tang Nano 4K は `gowin.cpp:187-194` の専用マスク、9K は標準マスク `gowin.cpp:63-69` を使います。Sipeed Wiki は容量を示しますが、フラッシュ部品の品番は記載していません。そのため Fake は実部品を断定せず、4 MiB NOR に汎用 JEDEC ID `0xEF4016`、8 MiB NOR に `0xEF4017` を返します。
+
+FT2232 のケーブル、チャンネル、VID/PID、JTAG chain index はボード定義と既定の接続に任せます。これらは接続先を誤る設定であり、今回の操作固有の設定には含めません。`--skip-reset` と `--skip-load-bridge` は Gowin のコンストラクターへ渡されず、`--spi` は Gowin の JTAG/SPI bridge を通らない別経路のため公開しません。
+
+### Fake での外付けフラッシュ測定
+
+以下は実 fixture を使った Fake USB 上の時間であり、実機の測定値ではありません。全長の書き込みと検証は省略していません。
+
+- 9K の外付け書き込みと `--verify` を単独で実行した場合、テスト時間は約 119.4 秒、wall time は約 119.5 秒でした。
+- BSCAN の破損 readback negative control は約 51.5 秒、4K の外付け書き込みと `--verify` は約 65.1 秒でした。
+- `program.test.mjs` 全体は、BSCAN 破損ビットの修正後に 27 件すべて成功し、wall time は 418.22 秒でした。内訳の測定値は、9K 検証 122.50 秒、4K 検証 65.10 秒、破損 readback 51.55 秒です。
+- `node --test --test-concurrency=1 tests/sim/*.test.mjs` は 40 件すべて成功し、wall time は 428.69 秒でした。
+
+これらはシミュレーションの負荷や Fake の実装に依存する時間です。基板上の書き込み速度や完了時間の予測には使えません。

@@ -8,7 +8,17 @@ const TIMEOUT = /etimedout|timed?\s*out|timeout/i;
 const RUNTIME_FAILURE =
   /suspenderror|trying to suspend without webassembly\.promising|shared typed array|atomics\.waitasync/i;
 
-export function classifyResult({ exitCode, log = "", timedOut = false }) {
+export function classifyResult({
+  exitCode,
+  log = "",
+  timedOut = false,
+  operation = "write",
+}) {
+  const failureReason = operation === "dump"
+    ? "読み出し失敗"
+    : operation === "erase"
+      ? "消去失敗"
+      : "書き込み失敗";
   if (timedOut || TIMEOUT.test(log)) {
     return { ok: false, reason: "タイムアウト" };
   }
@@ -28,7 +38,7 @@ export function classifyResult({ exitCode, log = "", timedOut = false }) {
     return { ok: false, reason: "実行環境エラー" };
   }
   if (exitCode !== 0 || /\bFAIL\b/i.test(log)) {
-    return { ok: false, reason: "書き込み失敗" };
+    return { ok: false, reason: failureReason };
   }
   return { ok: true, reason: "成功" };
 }
