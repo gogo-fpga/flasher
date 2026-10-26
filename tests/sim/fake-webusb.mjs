@@ -589,6 +589,7 @@ class FakeUSBDevice {
     this.opened = false;
     this.interfaceClaims = new Set();
     this.tap = new GowinTap(idcode, faults, flashUsercode);
+    this.traceUsercodeReadPending = false;
     this.faults = faults;
     this.mpsseInput = [];
     this.mpsseOutput = [];
@@ -728,10 +729,11 @@ class FakeUSBDevice {
     }
     if (output.length === 0) output.push(0x01, 0x60);
     this.tap.maybeHeartbeat();
-    if (this.tap.instruction === 0x13) {
+    if (this.traceUsercodeReadPending) {
       traceFakeUsb(
         `usb-in instruction=0x13 endpoint=${endpoint} length=${output.length} bytes=${output.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
       );
+      this.traceUsercodeReadPending = false;
     }
     return { status: "ok", data: descriptorView(output, length) };
   }
@@ -836,6 +838,7 @@ class FakeUSBDevice {
           traceFakeUsb(
             `mpsse-read instruction=0x13 bits=${bits} bytes=${received.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
           );
+          this.traceUsercodeReadPending = true;
         }
         this.mpsseOutput.push(...received);
       }
