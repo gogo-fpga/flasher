@@ -51,6 +51,9 @@ jobs:
       - name: Web アプリを組み立て
         run: scripts/build-web.sh
 
+      - name: 成果物の SHA-256 を記録
+        run: sha256sum build/jspi-pthread/*.wasm build/jspi-pthread/*.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: テスト用ビットストリームを生成
         run: tests/fixtures/build-fs.sh
 
@@ -62,9 +65,6 @@ jobs:
 
       - name: Playwright E2E
         run: npx playwright test
-
-      - name: 成果物の SHA-256 を記録
-        run: sha256sum build/jspi-pthread/*.wasm build/jspi-pthread/*.mjs | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Web 成果物を保存
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
