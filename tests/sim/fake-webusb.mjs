@@ -496,6 +496,9 @@ class GowinTap {
         tdo = this.drShift & 1;
         this.drShift = (this.drShift >>> 1) | ((tdi & 1) << 31);
       }
+      if (this.instruction === 0x13 && this.drReadBits) {
+        this.drReadBits.push(tdo);
+      }
       if ([0x16, 0x17, 0x0a, 0x08, 0x71, 0x3d].includes(this.instruction)) {
         this.drInputBits.push(tdi & 1);
       }
@@ -512,6 +515,7 @@ class GowinTap {
     if (next === TAP.captureDr) {
       this.drShift = this.registerValue();
       if (this.instruction === 0x13) {
+        this.drReadBits = [];
         traceFakeUsbEvent(
           `dr-read-${traceHex(this.instruction, 2)}`,
           `dr-read instruction=${traceHex(this.instruction, 2)} value=${traceHex(this.drShift)} usercode=${traceHex(this.usercode)}`,
@@ -532,6 +536,21 @@ class GowinTap {
         );
       }
       this.instruction = 0x11;
+    }
+    if (
+      this.state === TAP.shiftDr
+      && next !== TAP.shiftDr
+      && this.instruction === 0x13
+      && this.drReadBits
+    ) {
+      const value = this.drReadBits.reduce(
+        (result, bit, index) => result + (bit ? 2 ** index : 0),
+        0,
+      );
+      traceFakeUsb(
+        `dr-read-shift instruction=0x13 bits=${this.drReadBits.join("")} value=${traceHex(value)}`,
+      );
+      this.drReadBits = null;
     }
     this.state = next;
     return tdo;
@@ -745,7 +764,14 @@ class FakeUSBDevice {
           const tdo = this.tap.clock(tms, bits >>> 7);
           result |= tdo << (7 - bit);
         }
-        if (command === 0x6b) this.mpsseOutput.push(result);
+        if (command === 0x6b) {
+          this.mpsseOutput.push(result);
+          if (this.tap.instruction === 0x13) {
+            traceFakeUsb(
+              `mpsse-tms-read instruction=0x13 bits=${count} bytes=${result.toString(16).padStart(2, "0")}`,
+            );
+          }
+        }
         continue;
       }
 
@@ -801,6 +827,11 @@ class FakeUSBDevice {
       }
       if (hasRead) {
         if (bitMode) received[0] = packMpsseBitModeRead(bitModeReadBits, lsbFirst);
+        if (this.tap.instruction === 0x13) {
+          traceFakeUsb(
+            `mpsse-read instruction=0x13 bits=${bits} bytes=${received.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+          );
+        }
         this.mpsseOutput.push(...received);
       }
     }
