@@ -386,6 +386,7 @@ jobs:
       - name: Playwright E2E
         env:
           BUILD_ROOT: build
+          BUILD_INFO_CHECK: artifacts
         run: npx playwright test
 
       - name: E2E 失敗資料を保存

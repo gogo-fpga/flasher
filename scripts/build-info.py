@@ -145,9 +145,73 @@ def check_build_info(root, artifacts):
     print(f"Verified C JSPI build metadata in {info_path}")
 
 
+def submodule_gitlinks(root):
+    output = run_git(root, "ls-tree", "HEAD", "--", *SUBMODULES)
+    versions = {}
+    for line in output.splitlines():
+        metadata, path = line.split("\t", 1)
+        mode, object_type, sha = metadata.split()
+        if mode != "160000" or object_type != "commit":
+            raise RuntimeError(f"Expected a gitlink for submodule {path}")
+        versions[path] = sha
+    if set(versions) != set(SUBMODULES):
+        missing = sorted(set(SUBMODULES) - set(versions))
+        extra = sorted(set(versions) - set(SUBMODULES))
+        raise RuntimeError(
+            f"Build metadata gitlink paths do not match: missing={missing}, extra={extra}"
+        )
+    return versions
+
+
+def check_artifacts(root, artifacts):
+    info_path = artifacts / "build-info.json"
+    if not info_path.is_file():
+        raise RuntimeError(f"Required build metadata is missing: {info_path}")
+    try:
+        actual = json.loads(info_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not read build metadata {info_path}: {error}") from error
+    if not isinstance(actual, dict):
+        raise RuntimeError(f"Build metadata must be a JSON object: {info_path}")
+
+    expected_keys = {
+        "variant",
+        "async_mode",
+        "build_script_sha256",
+        "submodule_shas",
+        "emcc_version",
+        "artifacts",
+    }
+    if set(actual) != expected_keys:
+        raise RuntimeError(
+            f"Build metadata keys do not match: missing={sorted(expected_keys - set(actual))}, "
+            f"extra={sorted(set(actual) - expected_keys)}"
+        )
+    if actual["variant"] != "C":
+        raise RuntimeError(f"Build metadata variant must be C, got {actual['variant']!r}")
+    if actual["async_mode"] != "jspi":
+        raise RuntimeError(
+            f"Build metadata async_mode must be jspi, got {actual['async_mode']!r}"
+        )
+    if actual["build_script_sha256"] != sha256_file(root / "scripts/build-wasm.sh"):
+        raise RuntimeError("Build metadata build_script_sha256 does not match current build script")
+    if actual["submodule_shas"] != submodule_gitlinks(root):
+        raise RuntimeError("Build metadata submodule_shas does not match superproject gitlinks")
+    if not isinstance(actual["emcc_version"], str) or not actual["emcc_version"].strip():
+        raise RuntimeError("Build metadata emcc_version must be a non-empty string")
+    expected_artifacts = {
+        name: sha256_file(artifacts / name)
+        for name in ("openFPGALoader.mjs", "openFPGALoader.wasm")
+    }
+    if actual["artifacts"] != expected_artifacts:
+        raise RuntimeError("Build metadata artifacts do not match downloaded files")
+    # The build job's full check validated emcc_version in the same run.
+    print(f"Verified artifact metadata in {info_path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("write", "check"))
+    parser.add_argument("action", choices=("write", "check", "check-artifacts"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--variant")
@@ -160,8 +224,10 @@ def main():
             if args.variant is None or args.async_mode is None:
                 parser.error("write requires --variant and --async-mode")
             write_build_info(root, artifacts, args.variant, args.async_mode)
-        else:
+        elif args.action == "check":
             check_build_info(root, artifacts)
+        else:
+            check_artifacts(root, artifacts)
     except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
         print(f"build-info: {error}", file=sys.stderr)
         return 1
