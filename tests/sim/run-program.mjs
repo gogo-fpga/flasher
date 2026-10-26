@@ -68,6 +68,27 @@ try {
   } catch {
     dump = null;
   }
+  if (process.env.FAKE_USB_TRACE === "1") {
+    const queuedBytes = device.mpsseOutput;
+    const code = device.tap.flashUsercode;
+    const codeBytes = code === undefined ? [] : [code & 0xff, (code >>> 8) & 0xff];
+    const queuedUsercodeOffset = codeBytes.length === 0
+      ? -1
+      : queuedBytes.findIndex((byte, index) =>
+        byte === codeBytes[0] && queuedBytes[index + 1] === codeBytes[1]
+      );
+    const queuedHead = queuedBytes
+      .slice(0, 8)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const queuedTail = queuedBytes
+      .slice(-8)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    process.stderr.write(
+      `FAKE_USB_TRACE final-usb-input pending=${device.traceUsercodeReadPending ? 1 : 0} queued=${queuedBytes.length} usercode-offset=${queuedUsercodeOffset} head=${queuedHead} tail=${queuedTail}\n`,
+    );
+  }
   process.stderr.write(
     `\n__PROGRAM_RESULT__${JSON.stringify({
       exitCode,
