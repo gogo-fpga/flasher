@@ -83,11 +83,16 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
       },
     );
     const wallElapsedMs = performance.now() - started;
+    let childStderr = child.stderr ?? "";
     if (process.env.FAKE_USB_TRACE === "1") {
       const traceLines = `${child.stdout ?? ""}\n${child.stderr ?? ""}`
         .split(/\r?\n/)
         .filter((line) => line.startsWith("FAKE_USB_TRACE"));
       if (traceLines.length > 0) process.stderr.write(`${traceLines.join("\n")}\n`);
+      childStderr = childStderr
+        .split(/\r?\n/)
+        .filter((line) => !line.startsWith("FAKE_USB_TRACE"))
+        .join("\n");
     }
     if (child.error?.code === "ETIMEDOUT") {
       return {
@@ -96,7 +101,7 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
         timeoutCode: child.error.code,
         elapsedMs: wallElapsedMs,
         elapsedSource: "wall-timeout",
-        output: `${child.stdout}\n${child.stderr}`,
+        output: `${child.stdout}\n${childStderr}`,
       };
     }
     if (child.error) {
@@ -116,7 +121,7 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
       ...result,
       wallElapsedMs,
       elapsedSource: "program",
-      output: `${child.stdout}\n${child.stderr.replace(marker[0], "\n")}`,
+      output: `${child.stdout}\n${childStderr.replace(marker[0], "\n")}`,
     };
   } finally {
     rmSync(norResultPath, { force: true });
