@@ -11,6 +11,10 @@ const fakeWebUsbSource = readFileSync(
   resolve(repoRoot, "tests/sim/fake-webusb.mjs"),
   "utf8",
 );
+const fsChecksumSource = readFileSync(
+  resolve(repoRoot, "tests/sim/fs-checksum.mjs"),
+  "utf8",
+);
 const screenshots = resolve(repoRoot, "build/screenshots");
 mkdirSync(screenshots, { recursive: true });
 const isolatedResponseHeaders = {
@@ -100,6 +104,14 @@ async function routeWorkerWithFakeUsb(
       contentType: "text/javascript",
       headers: isolatedResponseHeaders,
       body: fakeWebUsbSource,
+    }),
+  );
+  await page.route("**/__e2e/fs-checksum.mjs", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/javascript",
+      headers: isolatedResponseHeaders,
+      body: fsChecksumSource,
     }),
   );
   await page.route("**/worker-real.js", (route) =>
