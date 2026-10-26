@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { resolve } from "node:path";
 
@@ -8,6 +10,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const runner = resolve(import.meta.dirname, "run-program.mjs");
 const buildRoot = resolve(process.env.WASM_BUILD_ROOT ?? "build");
 const variant = process.env.WASM_VARIANT ?? "jspi-pthread";
+const bscanTimeout = 900_000;
 const boards = [
   { name: "Tang Nano 1K", board: "tangnano1k", idcode: 0x0100681b },
   { name: "Tang Nano 4K", board: "tangnano4k", idcode: 0x0100981b },
@@ -39,45 +42,73 @@ function parseFsPayload(board, reverseByte = false) {
   return Buffer.from(bytes);
 }
 
-function runProgram(board, args, faults = {}, timeout = 90_000) {
+function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {}) {
   const childEnv = { ...process.env };
   delete childEnv.NODE_TEST_CONTEXT;
-  const child = spawnSync(
-    process.execPath,
-    [runner, variant, board.idcode.toString(16), JSON.stringify(args), JSON.stringify(faults)],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: childEnv,
-      maxBuffer: 8 * 1024 * 1024,
-      timeout,
-    },
+  childEnv.SIM_FORCE_EXIT = "1";
+  const norResultPath = resolve(
+    buildRoot,
+    `sim-nor-${process.pid}-${randomUUID()}.bin`,
   );
-  if (child.error?.code === "ETIMEDOUT") {
+  childEnv.SIM_NOR_RESULT_FILE = norResultPath;
+  try {
+    const started = performance.now();
+    const child = spawnSync(
+      process.execPath,
+      [
+        runner,
+        variant,
+        board.idcode.toString(16),
+        JSON.stringify(args),
+        JSON.stringify(faults),
+        JSON.stringify(inputFiles),
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: childEnv,
+        maxBuffer: 8 * 1024 * 1024,
+        timeout,
+      },
+    );
+    const wallElapsedMs = performance.now() - started;
+    if (child.error?.code === "ETIMEDOUT") {
+      return {
+        exitCode: child.status ?? 1,
+        timedOut: true,
+        timeoutCode: child.error.code,
+        elapsedMs: wallElapsedMs,
+        elapsedSource: "wall-timeout",
+        output: `${child.stdout}\n${child.stderr}`,
+      };
+    }
+    if (child.error) {
+      throw new Error(`Programming subprocess failed: ${child.error.message}`, { cause: child.error });
+    }
+    const marker = /(?:^|\r?\n)__PROGRAM_RESULT__(\{[^\r\n]*\})(?:\r?\n|$)/.exec(child.stderr);
+    assert.ok(
+      marker,
+      `Programming subprocess returned ${child.status}\nstdout:\n${child.stdout}\nstderr:\n${child.stderr}`,
+    );
+    const result = JSON.parse(marker[1]);
+    if (result.norResultFile) {
+      result.nor = readFileSync(norResultPath).toString("base64");
+      delete result.norResultFile;
+    }
     return {
-      exitCode: child.status ?? 1,
-      timedOut: true,
-      timeoutCode: child.error.code,
-      output: `${child.stdout}\n${child.stderr}`,
+      ...result,
+      wallElapsedMs,
+      elapsedSource: "program",
+      output: `${child.stdout}\n${child.stderr.replace(marker[0], "\n")}`,
     };
+  } finally {
+    rmSync(norResultPath, { force: true });
   }
-  if (child.error) {
-    throw new Error(`Programming subprocess failed: ${child.error.message}`, { cause: child.error });
-  }
-  const marker = /(?:^|\r?\n)__PROGRAM_RESULT__(\{[^\r\n]*\})(?:\r?\n|$)/.exec(child.stderr);
-  assert.ok(
-    marker,
-    `Programming subprocess returned ${child.status}\nstdout:\n${child.stdout}\nstderr:\n${child.stderr}`,
-  );
-  return {
-    ...JSON.parse(marker[1]),
-    output: `${child.stdout}\n${child.stderr.replace(marker[0], "\n")}`,
-  };
 }
 
 function measured(testName, variantName, boardName, repeat, result) {
   console.log(
-    `PROGRAM_MEASURE,${variantName},${boardName},${testName},${repeat},${result.elapsedMs.toFixed(3)}`,
+    `PROGRAM_MEASURE,${variantName},${boardName},${testName},${repeat},${result.elapsedMs.toFixed(3)},${result.elapsedSource}`,
   );
 }
 
@@ -215,6 +246,252 @@ test("clean Tang Nano 20K flash verification succeeds", { timeout: 60_000 }, () 
   assert.deepEqual(
     Buffer.from(result.nor, "base64").subarray(0, expected.length),
     expected,
+  );
+});
+
+test("Tang Nano 20K flash write succeeds with verification disabled", { timeout: 60_000 }, () => {
+  const board = boards[3];
+  const expected = parseFsPayload(board.board);
+  const result = runProgram(
+    board,
+    ["-b", board.board, "-f", resolve(repoRoot, "build/fixtures", `${board.board}.fs`)],
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(0, expected.length),
+    expected,
+  );
+  assert.equal(result.spiCommandCounts[3] ?? 0, 0);
+});
+
+test("Tang Nano 9K external flash write verifies NOR contents", { timeout: bscanTimeout }, () => {
+  const board = boards[2];
+  const expected = parseFsPayload(board.board);
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--external-flash",
+      "--verify",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    {},
+    bscanTimeout,
+  );
+  measured("bscan-9k-external-write-verify", variant, board.name, 1, result);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(0, expected.length),
+    expected,
+  );
+});
+
+test("Tang Nano 4K external flash uses its board-specific BSCAN pin map", { timeout: bscanTimeout }, () => {
+  const board = boards[1];
+  const expected = parseFsPayload(board.board);
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--external-flash",
+      "--verify",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    {},
+    bscanTimeout,
+  );
+  measured("bscan-4k-external-write-verify", variant, board.name, 1, result);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(0, expected.length),
+    expected,
+  );
+});
+
+test("corrupted Tang Nano 9K external-flash readback fails verification", { timeout: bscanTimeout }, () => {
+  const board = boards[2];
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--external-flash",
+      "--verify",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    { corruptNorReadback: true },
+    bscanTimeout,
+  );
+  measured("bscan-9k-corrupt-readback", variant, board.name, 1, result);
+  assert.equal(result.readCorrupted, true, "BSCAN NOR readback corruption was not applied");
+  assert.notEqual(
+    result.exitCode,
+    0,
+    `BSCAN corruption was applied at ${JSON.stringify(result.readCorruptedAt)}\n${result.output}`,
+  );
+  assert.match(result.output, /Verification failed/i);
+  assert.ok(result.spiCommandCounts[3] > 0, "external NOR read was not exercised");
+});
+
+test("external flash offsets select the NOR write address", { timeout: bscanTimeout }, () => {
+  const board = boards[2];
+  const expected = parseFsPayload(board.board);
+  const offset = 0x1000;
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--external-flash",
+      "-o",
+      String(offset),
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    {},
+    bscanTimeout,
+  );
+  measured("bscan-9k-offset-write", variant, board.name, 1, result);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(offset, offset + expected.length),
+    expected,
+  );
+});
+
+test("unprotect clears NOR protection before external programming", { timeout: bscanTimeout }, () => {
+  const board = boards[2];
+  const expected = parseFsPayload(board.board);
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--external-flash",
+      "--unprotect-flash",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    { protectedNor: true },
+    bscanTimeout,
+  );
+  measured("bscan-9k-unprotect-write", variant, board.name, 1, result);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.ok(result.spiCommandCounts[1] > 0, "status register was not written");
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(0, expected.length),
+    expected,
+  );
+});
+
+test("Tang Nano 20K bulk erase leaves every NOR byte erased", { timeout: 60_000 }, () => {
+  const board = boards[3];
+  const result = runProgram(
+    board,
+    ["-b", board.board, "--bulk-erase"],
+    { norSeed: { offset: 32, bytes: [0, 1, 2, 3] } },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.ok(result.spiCommandCounts[0xc7] > 0, "chip erase command was not sent");
+  assert.equal(result.norAllErased, true);
+});
+
+test("flash dump reads the requested NOR range", { timeout: bscanTimeout }, () => {
+  const board = boards[2];
+  const offset = 0x100;
+  const bytes = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "--external-flash",
+      "--dump-flash",
+      "--file-size",
+      String(bytes.length),
+      "-o",
+      String(offset),
+      "/dump.bin",
+    ],
+    { norSeed: { offset, bytes } },
+    bscanTimeout,
+  );
+  measured("bscan-9k-offset-dump", variant, board.name, 1, result);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.deepEqual(Buffer.from(result.dump, "base64"), Buffer.from(bytes));
+});
+
+test("MCU firmware is written to the 4K firmware page", { timeout: 60_000 }, () => {
+  const board = boards[1];
+  const firmware = [0x12, 0x34, 0x56, 0x78];
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--mcufw",
+      "/mcufw.bin",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    {},
+    90_000,
+    { "/mcufw.bin": firmware },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(
+    Buffer.from(result.eflash, "base64").subarray(0x380 * 256, 0x380 * 256 + firmware.length),
+    Buffer.from(firmware).reverse(),
+  );
+});
+
+test("user-flash data is written to the 9K user-flash page", { timeout: 60_000 }, () => {
+  const board = boards[2];
+  const userFlash = [0xa1, 0xb2, 0xc3, 0xd4];
+  const result = runProgram(
+    board,
+    [
+      "-b",
+      board.board,
+      "-f",
+      "--user-flash",
+      "/user-flash.bin",
+      resolve(repoRoot, "build/fixtures", `${board.board}.fs`),
+    ],
+    {},
+    90_000,
+    { "/user-flash.bin": userFlash },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(
+    Buffer.from(result.eflash, "base64").subarray(0x6d0 * 256, 0x6d0 * 256 + userFlash.length),
+    Buffer.from(userFlash.map((byte) => byte ^ 0xff)).reverse(),
+  );
+});
+
+test("selected frequency is reported and reset reaches the Gowin reload path", { timeout: 60_000 }, () => {
+  const board = boards[2];
+  const fixture = resolve(repoRoot, "build/fixtures", `${board.board}.fs`);
+  const result = runProgram(board, ["-b", board.board, "--freq", "3000000", "-r", fixture]);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.match(result.output, /3\.00MHz/);
+
+  const withoutReset = runProgram(board, ["-b", board.board, fixture]);
+  const withReset = runProgram(board, ["-b", board.board, "-r", fixture]);
+  assert.equal(withReset.exitCode, 0, withReset.output);
+  assert.ok(
+    withReset.instructionCounts[0x3c] > (withoutReset.instructionCounts[0x3c] ?? 0),
+    "reset did not add the Gowin RELOAD command",
   );
 });
 

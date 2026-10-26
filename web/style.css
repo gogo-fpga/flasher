@@ -140,6 +140,11 @@ input[type="file"] {
   border-radius: 0.55rem;
 }
 
+.target-options:disabled,
+.advanced-group:disabled {
+  opacity: 0.65;
+}
+
 .target-options legend {
   padding: 0 0.35rem;
   font-weight: 700;
@@ -153,6 +158,88 @@ input[type="file"] {
 
 .target-options input {
   margin-top: 0.35rem;
+}
+
+.advanced-settings {
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 0.55rem;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.advanced-settings[open] summary {
+  margin-bottom: 1rem;
+}
+
+.advanced-group {
+  display: grid;
+  gap: 0.55rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem 1rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 0.55rem;
+}
+
+.advanced-group legend {
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.advanced-group > label,
+.option-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.advanced-group input[type="radio"],
+.option-row input {
+  flex: 0 0 auto;
+  margin-top: 0.35rem;
+}
+
+.advanced-group .field {
+  margin: 0.5rem 0 0;
+}
+
+.option-row {
+  margin: 0.7rem 0 0.2rem;
+  font-weight: 700;
+}
+
+.field-reason,
+.field-hint,
+.warning-text {
+  margin: 0.15rem 0 0.65rem 1.65rem;
+  color: #475467;
+  font-size: 0.88rem;
+}
+
+.field-reason:empty {
+  display: none;
+}
+
+.warning-text {
+  color: #93370d;
+}
+
+.validation-errors {
+  margin: 1rem 0;
+  padding: 0.8rem 1rem 0.8rem 2.2rem;
+  border: 1px solid #fda29b;
+  border-radius: 0.55rem;
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.validation-errors:empty,
+.validation-errors[hidden] {
+  display: none;
 }
 
 .caution {
@@ -262,8 +349,28 @@ dialog::backdrop {
     border-color: #475467;
   }
 
+  .advanced-settings,
+  .advanced-group {
+    border-color: #475467;
+  }
+
+  .field-reason,
+  .field-hint {
+    color: #d0d5dd;
+  }
+
   .caution {
     color: #fec84b;
+  }
+
+  .warning-text {
+    color: #fec84b;
+  }
+
+  .validation-errors {
+    border-color: #912018;
+    color: #fda29b;
+    background: #55160c;
   }
 
   button.secondary {
