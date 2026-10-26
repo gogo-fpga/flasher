@@ -39,6 +39,8 @@ const TRANSITIONS = [
 const TRACE_ENABLED = process.env.FAKE_USB_TRACE === "1";
 const TRACE_INSTRUCTIONS = new Set([0x0a, 0x13, 0x15, 0x3c, 0x71, 0x3a]);
 const TRACE_COUNTS = new Map();
+const FTDI_MAX_PACKET_SIZE = 512;
+const FTDI_STATUS_SIZE = 2;
 
 function traceHex(value, width = 8) {
   return `0x${(value >>> 0).toString(16).padStart(width, "0")}`;
@@ -145,6 +147,7 @@ class GowinTap {
     this.status = (1 << 12) | (1 << 13) | (1 << 15) | (1 << 16);
     this.eflashErasePending = false;
     this.usercode = 0;
+    this.traceUsercodeReadWindow = false;
     this.drInputBits = [];
     this.configEnabled = false;
     this.bscanPins = this.spiPins.select;
@@ -208,6 +211,7 @@ class GowinTap {
           `usercode-set kind=internal-flash-reload value=${traceHex(this.usercode)}`,
         );
       }
+      this.traceUsercodeReadWindow = true;
     }
   }
 
@@ -590,6 +594,8 @@ class FakeUSBDevice {
     this.interfaceClaims = new Set();
     this.tap = new GowinTap(idcode, faults, flashUsercode);
     this.traceUsercodeReadPending = false;
+    this.mpsseOutputOrigins = [];
+    this.lastTransferInTrace = null;
     this.faults = faults;
     this.mpsseInput = [];
     this.mpsseOutput = [];
@@ -640,6 +646,60 @@ class FakeUSBDevice {
     this.tap.reset();
     this.mpsseInput = [];
     this.mpsseOutput = [];
+    this.mpsseOutputOrigins = [];
+    this.lastTransferInTrace = null;
+  }
+
+  enqueueMpsseOutput(opcode, bytes) {
+    const output = Array.from(bytes);
+    if (output.length === 0) return;
+    this.mpsseOutput.push(...output);
+    if (!TRACE_ENABLED) return;
+
+    const lastOrigin = this.mpsseOutputOrigins.at(-1);
+    if (lastOrigin?.opcode === opcode) {
+      lastOrigin.bytes += output.length;
+    } else {
+      this.mpsseOutputOrigins.push({ opcode, bytes: output.length });
+    }
+    if (this.tap.traceUsercodeReadWindow) {
+      traceFakeUsb(
+        `mpsse-enqueue opcode=${traceHex(opcode, 2)} bytes=${output.length} queued=${this.mpsseOutput.length}`,
+      );
+    }
+  }
+
+  consumeMpsseOutput(length) {
+    const output = this.mpsseOutput.splice(0, length);
+    if (!TRACE_ENABLED) return output;
+
+    let remaining = output.length;
+    while (remaining > 0 && this.mpsseOutputOrigins.length > 0) {
+      const origin = this.mpsseOutputOrigins[0];
+      const consumed = Math.min(remaining, origin.bytes);
+      origin.bytes -= consumed;
+      remaining -= consumed;
+      if (origin.bytes === 0) this.mpsseOutputOrigins.shift();
+    }
+    return output;
+  }
+
+  traceReadWindowStart() {
+    const originSummary = this.mpsseOutputOrigins
+      .map(({ opcode, bytes }) => `${traceHex(opcode, 2)}:${bytes}`)
+      .join(",");
+    traceFakeUsb(
+      `read-window-start instruction=0x3c queued=${this.mpsseOutput.length} origins=${originSummary || "-"} last-transfer-in=${this.lastTransferInTrace ?? "none"}`,
+    );
+  }
+
+  clockTap(tms, tdi) {
+    const wasInReadWindow = this.tap.traceUsercodeReadWindow;
+    const value = this.tap.clock(tms, tdi);
+    if (!wasInReadWindow && this.tap.traceUsercodeReadWindow) {
+      this.traceReadWindowStart();
+    }
+    return value;
   }
 
   async selectConfiguration(configurationValue) {
@@ -719,20 +779,40 @@ class FakeUSBDevice {
     if (![1, 3, 0x81, 0x83].includes(endpoint)) {
       return { status: "stall", data: new DataView(new ArrayBuffer(0)) };
     }
-    const maxPayload = Math.max(1, Math.min(510, length - 2));
+    const maxPayload = Math.max(
+      1,
+      Math.min(FTDI_MAX_PACKET_SIZE - FTDI_STATUS_SIZE, length - FTDI_STATUS_SIZE),
+    );
     const output = [];
     while (this.mpsseOutput.length > 0 && output.length < length) {
       output.push(0x01, 0x60);
-      const count = Math.min(maxPayload, this.mpsseOutput.length, length - output.length - 2);
+      const count = Math.min(
+        maxPayload,
+        this.mpsseOutput.length,
+        length - output.length - FTDI_STATUS_SIZE,
+      );
       if (count <= 0) break;
-      output.push(...this.mpsseOutput.splice(0, count));
+      output.push(...this.consumeMpsseOutput(count));
     }
     if (output.length === 0) output.push(0x01, 0x60);
     this.tap.maybeHeartbeat();
+    if (TRACE_ENABLED) {
+      const packetHeads = [];
+      for (let offset = 0; offset < output.length; offset += FTDI_MAX_PACKET_SIZE) {
+        packetHeads.push(
+          output
+            .slice(offset, offset + Math.min(8, FTDI_MAX_PACKET_SIZE))
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join(""),
+        );
+      }
+      const trace = `requested=${length} returned=${output.length} queued=${this.mpsseOutput.length} packet-heads=${packetHeads.join("/")}`;
+      this.lastTransferInTrace = trace;
+      if (this.tap.traceUsercodeReadWindow) {
+        traceFakeUsb(`transfer-in endpoint=${endpoint} ${trace}`);
+      }
+    }
     if (this.traceUsercodeReadPending) {
-      traceFakeUsb(
-        `usb-in instruction=0x13 endpoint=${endpoint} length=${output.length} bytes=${output.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
-      );
       this.traceUsercodeReadPending = false;
     }
     return { status: "ok", data: descriptorView(output, length) };
@@ -743,7 +823,7 @@ class FakeUSBDevice {
       const command = this.mpsseInput[0];
       if (command === 0xaa || command === 0xab) {
         this.mpsseInput.shift();
-        this.mpsseOutput.push(0xfa, command);
+        this.enqueueMpsseOutput(command, [0xfa, command]);
         continue;
       }
       if (command === 0x80 || command === 0x82 || command === 0x86) {
@@ -753,7 +833,7 @@ class FakeUSBDevice {
       }
       if ([0x81, 0x83].includes(command)) {
         this.mpsseInput.shift();
-        this.mpsseOutput.push(0xff);
+        this.enqueueMpsseOutput(command, [0xff]);
         continue;
       }
       if ([0x8a, 0x8b, 0x8d, 0x8e, 0x8f, 0x97, 0x85, 0x87].includes(command)) {
@@ -768,11 +848,11 @@ class FakeUSBDevice {
         let result = 0;
         for (let bit = 0; bit < count; bit++) {
           const tms = (bits >>> bit) & 1;
-          const tdo = this.tap.clock(tms, bits >>> 7);
+          const tdo = this.clockTap(tms, bits >>> 7);
           result |= tdo << (7 - bit);
         }
         if (command === 0x6b) {
-          this.mpsseOutput.push(result);
+          this.enqueueMpsseOutput(command, [result]);
           if (this.tap.instruction === 0x13) {
             traceFakeUsb(
               `mpsse-tms-read instruction=0x13 bits=${count} bytes=${result.toString(16).padStart(2, "0")}`,
@@ -821,7 +901,7 @@ class FakeUSBDevice {
         const byteIndex = Math.floor(bit / 8);
         const bitIndex = lsbFirst ? bit % 8 : 7 - (bit % 8);
         const tdi = hasWrite ? ((payload[byteIndex] >>> bitIndex) & 1) : 0;
-        const tdo = this.tap.clock(0, tdi);
+        const tdo = this.clockTap(0, tdi);
         if (hasRead) {
           if (bitMode) {
             bitModeReadBits.push(tdo);
@@ -840,7 +920,7 @@ class FakeUSBDevice {
           );
           this.traceUsercodeReadPending = true;
         }
-        this.mpsseOutput.push(...received);
+        this.enqueueMpsseOutput(command, received);
       }
     }
   }
