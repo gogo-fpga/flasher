@@ -9,6 +9,19 @@ fi
 artifacts="$build_root/jspi-pthread"
 dist="$root/dist"
 
+case "${BUILD_INFO_CHECK:-full}" in
+  full)
+    build_info_action=check
+    ;;
+  artifacts)
+    build_info_action=check-artifacts
+    ;;
+  *)
+    printf 'Unsupported BUILD_INFO_CHECK value: %s\n' "$BUILD_INFO_CHECK" >&2
+    exit 1
+    ;;
+esac
+
 for artifact in openFPGALoader.mjs openFPGALoader.wasm; do
   if [[ ! -s "$artifacts/$artifact" ]]; then
     printf 'Missing required C-profile artifact: %s\n' "$artifacts/$artifact" >&2
@@ -16,7 +29,7 @@ for artifact in openFPGALoader.mjs openFPGALoader.wasm; do
   fi
 done
 
-python3 "$root/scripts/build-info.py" check \
+python3 "$root/scripts/build-info.py" "$build_info_action" \
   --root "$root" \
   --artifacts "$artifacts"
 

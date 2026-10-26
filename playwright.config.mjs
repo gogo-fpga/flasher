@@ -20,6 +20,7 @@ export default defineConfig({
     command: "scripts/build-web.sh && python3 dist/serve.py --port 8000",
     url: "http://127.0.0.1:8000",
     reuseExistingServer: false,
+    stdout: "pipe",
     timeout: 30_000,
   },
 });

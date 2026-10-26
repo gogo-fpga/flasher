@@ -43,6 +43,9 @@ jobs:
       - name: 固定値検査のテスト
         run: sh tests/check-pins/run.sh
 
+      - name: simulation shard coverage のテスト
+        run: python3 -m unittest discover -s tests/check-sim-shards -p 'test_*.py' -v
+
   zizmor:
     runs-on: ubuntu-26.04
     timeout-minutes: 15

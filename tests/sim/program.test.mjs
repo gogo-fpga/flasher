@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import test from "node:test";
+import { test } from "./sharding.mjs";
 import { resolve } from "node:path";
 
 import { checksumGowinEflash, parseGowinFsChecksum } from "./fs-checksum.mjs";

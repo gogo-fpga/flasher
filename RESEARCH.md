@@ -59,9 +59,14 @@ openFPGALoader を WASM 化した既存の例です。
 
 - `actions/setup-node` v7.1.0 は `mise.toml` と絶対パスの `node-version-file` に対応し、Node.js 版の検証と manifest 再取得の再試行を加えました。ESM への移行と `NODE_AUTH_TOKEN` の動作も変更しました。この workflow は Node.js major を明示し、cache、`node-version-file`、認証 token を使わないため、追加設定は不要です。action の runtime は Node.js 24 です。
 - `actions/upload-artifact` v7.0.2 は HTTP 429 の再試行と `Retry-After` の処理を改善しました。成功時の Web 成果物と失敗時の Playwright 資料の保存に使います。
+- `actions/cache` v6.1.0 (`55cc8345863c7cc4c66a329aec7e433d2d1c52a9`) は読み取り専用 token での cache 書き込み失敗を扱う修正を含みます。v6.0.0 からの差分と release note を確認しました。emsdk の展開物と Python 版ごとの fixture を別々の key で restore/save します。週次 schedule と `workflow_dispatch` の `cache=false` では両方を使いません。
+- `actions/download-artifact` v8.0.2 (`9000827ccba6bdab643e8b6fd33ac0654aef8333`) は HTTP 429 の再試行と `Retry-After` の処理を改善し、`@actions/artifact` 6.3.1 を取り込みました。action manifest は Node.js 24 runtime で、digest 不一致時の既定動作は error です。3 つの simulator shard と E2E job は、同じ run の build artifact を取得します。
+- emsdk と fixture だけを cache し、ライブラリーの build 結果は run 間で cache しません。C/C++ の成果物は submodule commit、emsdk、build option の組み合わせに依存し、広い cache key では古い出力を再利用する危険があるためです。ライブラリーは build job で一度だけ作り、sim と E2E には短期 artifact として渡します。Playwright browser は install が約 18 秒で、主な時間を占める OS 依存 package も cache されないため、browser cache は追加しません。
+- build workflow は path filter で文書などの変更を除外し、1 つの build artifact を 3 つの simulator shard と Playwright に渡します。shard の割り当ては `ae0fc01` の per-test duration を使った LPT で均等化し、TAP report で shard の失敗と網羅性を別 job から検査します。詳細と事前登録した測定条件は [S3 の記録](docs/experiments/S3-ci-speed.md) にあります。
+- E2E job は emsdk や vendor submodule を取得せずに artifact を使うため、`BUILD_INFO_CHECK=artifacts` で確認します。Build job では SDK と checkout を使う完全な `check` を実行済みです。E2E 側はそのメタデータ、superproject の gitlink、build script と WASM/JS の hash を照合します。
 - actionlint v1.7.12 は `on.schedule.timezone`、deployment environment、`macos-26-intel` の検査に対応し、webhook event 一覧と popular-action データも更新しました。Go 1.26 対応と Windows arm64 の CI は upstream の開発環境の変更です。この workflow は timezone と deployment environment を指定せず、Ubuntu runner を使うため、新しい設定項目は不要です。
 - zizmor 1.31.0 は pre-commit、self-hosted runner、危険な trigger、cache 設定、PowerShell の監査を改善し、`image_version` trigger に対応しました。また、誤検出の精度、submodule/worktree 内の設定探索、version comment の解析、pre-commit 入力、PowerShell の信頼済み publishing 検査を修正しました。この workflow 群は pre-commit、self-hosted runner、`image_version`、`issue_comment`、PowerShell、cache を使わず、標準の action version comment を使います。1.31.1 は `dangerous-triggers` の抑制コメントが適用されない回帰を修正しました。finding の抑制は設定しません。
-- 追加した actionlint、setup-node、upload-artifact、zizmor のライセンスは MIT です。zizmor の 1.31.1 wheel に Python の追加依存はなく、`.github/zizmor-requirements.txt` は公開配布物の SHA-256 を固定します。
+- 追加した actionlint、setup-node、cache、download-artifact、upload-artifact、zizmor のライセンスは MIT です。これらの GitHub Actions は Dependabot の週次監視対象です。zizmor の 1.31.1 wheel に Python の追加依存はなく、`.github/zizmor-requirements.txt` は公開配布物の SHA-256 を固定します。
 
 ## Emscripten のビルドオプション
 
