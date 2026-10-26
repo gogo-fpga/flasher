@@ -52,8 +52,11 @@
           </label>
         </fieldset>
 
-        <p class="caution">
+        <p id="flash-write-warning" class="caution" hidden>
           フラッシュへの書き込みは既存の内容を消去します。対象のボードとファイルを確認してください。
+        </p>
+        <p id="flash-erase-warning" class="caution" hidden>
+          フラッシュの内容がすべて消えます。対象のボードを確認してください。
         </p>
 
         <details id="advanced-settings" class="advanced-settings">
@@ -70,11 +73,17 @@
               <span>フラッシュの読み出し</span>
             </label>
             <p id="dump-operation-reason" class="field-reason"></p>
+            <p id="dump-operation-hint" class="field-hint" hidden>
+              読み出し前に SRAM 上のデザインを停止し、処理後にフラッシュから再ロードします。
+            </p>
             <label>
               <input type="radio" name="operation" value="erase" />
               <span>フラッシュ全体の消去</span>
             </label>
             <p id="erase-operation-reason" class="field-reason"></p>
+            <p id="erase-operation-hint" class="field-hint" hidden>
+              消去前に SRAM 上のデザインを停止し、処理後にフラッシュから再ロードします。
+            </p>
           </fieldset>
 
           <fieldset class="advanced-group" id="flash-type-options">
@@ -217,7 +226,7 @@
       <p id="erase-warning"></p>
       <div class="dialog-actions">
         <button id="erase-cancel" type="button" class="secondary">キャンセル</button>
-        <button id="erase-confirm" type="button">消去する</button>
+        <button id="erase-confirm" type="button" class="danger">消去する</button>
       </div>
     </dialog>
   </body>

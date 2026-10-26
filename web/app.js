@@ -18,6 +18,10 @@ const form = document.querySelector("#program-form");
 const boardSelect = document.querySelector("#board-select");
 const fileInput = document.querySelector("#bitstream-file");
 const targetOptions = document.querySelector("#target-options");
+const flashWriteWarning = document.querySelector("#flash-write-warning");
+const flashEraseWarning = document.querySelector("#flash-erase-warning");
+const dumpOperationHint = document.querySelector("#dump-operation-hint");
+const eraseOperationHint = document.querySelector("#erase-operation-hint");
 const flashTypeOptions = document.querySelector("#flash-type-options");
 const verifyOption = document.querySelector("#verify-option");
 const offsetOption = document.querySelector("#offset-option");
@@ -152,6 +156,12 @@ function updateForm() {
     selectRadio("dump-size", "all");
   }
   options = readOptions();
+
+  flashWriteWarning.hidden =
+    options.operation !== "write" || options.target !== "flash";
+  flashEraseWarning.hidden = options.operation !== "erase";
+  dumpOperationHint.hidden = options.operation !== "dump";
+  eraseOperationHint.hidden = options.operation !== "erase";
 
   let applicability = getApplicability(board.id, options);
   if (!applicability.verify.enabled && verifySelection !== "default") {
@@ -337,6 +347,7 @@ function confirmErase(board) {
       { once: true, signal: controller.signal },
     );
     eraseDialog.showModal();
+    eraseCancelButton.focus();
   });
 }
 

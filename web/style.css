@@ -44,6 +44,14 @@ button:hover:not(:disabled) {
   background: #004eeb;
 }
 
+button.danger {
+  background: #b42318;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #912018;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

@@ -361,6 +361,8 @@ test("advanced settings screenshots cover all supported boards", async ({ page }
   for (const board of ["tangnano1k", "tangnano4k", "tangnano9k", "tangnano20k"]) {
     await page.locator("#board-select").selectOption(board);
     await page.locator('input[name="target"][value="flash"]').check();
+    await expect(page.locator("#flash-write-warning")).toBeVisible();
+    await expect(page.locator("#flash-erase-warning")).toBeHidden();
     await expect(advanced).toBeVisible();
     await page.screenshot({
       path: resolve(screenshots, `advanced-${board}.png`),
@@ -377,6 +379,14 @@ test("advanced settings screenshots cover all supported boards", async ({ page }
   await expect(page.locator("#protect-reason")).toContainText(
     "対応していません",
   );
+
+  await page.locator("#board-select").selectOption("tangnano20k");
+  await page.locator('input[name="operation"][value="dump"]').check();
+  await expect(page.locator("#flash-write-warning")).toBeHidden();
+  await expect(page.locator("#dump-operation-hint")).toBeVisible();
+  await page.locator('input[name="operation"][value="erase"]').check();
+  await expect(page.locator("#flash-erase-warning")).toBeVisible();
+  await expect(page.locator("#erase-operation-hint")).toBeVisible();
 });
 
 test("verify toggle updates the preview and worker arguments", async ({ page }) => {
@@ -422,6 +432,11 @@ test("erase confirmation cancel and Escape never request USB", async ({ page }) 
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Tang Nano 20K");
   await expect(dialog).toContainText("フラッシュの内容がすべて消えます");
+  await expect(page.locator("#flash-write-warning")).toBeHidden();
+  await expect(page.locator("#flash-erase-warning")).toBeVisible();
+  await expect(page.locator("#erase-operation-hint")).toBeVisible();
+  await expect(dialog.locator("#erase-cancel")).toBeFocused();
+  await expect(dialog.locator("#erase-confirm")).toHaveClass(/danger/);
   await page.screenshot({
     path: resolve(screenshots, "erase-dialog.png"),
     fullPage: false,
@@ -468,6 +483,9 @@ test("dump download contains the requested external-flash bytes", async ({ page 
   await page.locator("#board-select").selectOption("tangnano9k");
   await page.locator("#advanced-settings summary").click();
   await page.locator('input[name="operation"][value="dump"]').check();
+  await expect(page.locator("#flash-write-warning")).toBeHidden();
+  await expect(page.locator("#flash-erase-warning")).toBeHidden();
+  await expect(page.locator("#dump-operation-hint")).toBeVisible();
   await page.locator('input[name="dump-size"][value="custom"]').check();
   await page.locator("#dump-size-bytes").fill(String(expected.length));
   await page.locator("#offset-option").fill(String(offset));

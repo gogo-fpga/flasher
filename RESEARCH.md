@@ -184,11 +184,13 @@ JSPI/pthread の基準 B（`-Os`、LTO なし、legacy の wasm 例外、固定 
 | `--bulk-erase` | 無効 | 20K の外付け SPI フラッシュ | チップ全体を消去する。対象の Gowin 実装では GW2A のみ対応。bulk erase 側は `SPIFlash` に unprotect を渡さないため、`--unprotect-flash` と組み合わせても保護を解除できない。 | `main.cpp:980-982,649-652`、`gowin.hpp:44-47`、`flashInterface.cpp:149-177` | 公開。実行前にボード名と全消去を確認 |
 | `--dump-flash --file-size N` | 無効、サイズ 0 | 外付け SPI フラッシュの読み出し | `N` バイトを読み出す。4K/9K では `--external-flash` も指定する。出力先は positional file 引数。`--offset` は読み出し開始位置。読み出し後にビットストリームを再ロードする。 | `main.cpp:980,991-996,682-687`、`gowin.cpp:1176-1192` | 公開。全体または指定バイト数を選択し、長さを確認して保存 |
 | `--freq <Hz>` | 6 MHz | SRAM、フラッシュ | JTAG の初期周波数を設定する。Gowin はフラッシュ処理中に 2.5 MHz または 10 MHz へ切り替える。 | `main.cpp:73,231-250,1004`、`gowin.cpp:282,1248` | 公開。周波数切替の説明を表示 |
-| `-r/--reset` | 無効 | 全操作 | 操作後に Gowin の RELOAD/NOOP を送る。SRAM 書き込み後はフラッシュのイメージが再ロードされる。 | `main.cpp:1031-1032,690-691`、`gowin.cpp:267-271` | 公開。SRAM 書き込み後の影響を警告 |
+| `-r/--reset` | 無効 | 全操作 | 指定すると `main.cpp` は処理後に `fpga->reset()` を呼ぶ。Gowin の `reset()` は RELOAD/NOOP を送り、外付けフラッシュの読み出し・一括消去では `post_flash_access()` も `reset()` を呼ぶ。 | `main.cpp:690-691,1031-1032`、`gowin.cpp:267-271,1176-1192,1220-1271`、`flashInterface.cpp:149-177` | 公開。書き込み時のみ選択可能。読み出し・消去は処理内で reset を実行するため、追加の reset を選べない。SRAM 書き込み後の影響を警告 |
 | `-v/--verbose`、`--verbose-level` | 通常ログ、level 0 | 全操作 | `-v` は詳細ログ、`--verbose-level 2` は debug。プログラム動作自体は変えない。 | `main.cpp:1029-1048` | 公開。既定、詳細、debug を選択 |
 | `--mcufw <file>` | 未指定 | 4K、フラッシュ書き込み、内蔵フラッシュ | GW1NSR-4C で MCU ファームウェアを消去領域の `0x380` ページから書き込む。書き込み位置は `writeFLASH()` のページ番号で、実アドレスはページ単位に展開される。 | `gowin.cpp:141-153,290-313,647-658`、`main.cpp:1058-1059` | 公開。4K の内蔵フラッシュ書き込み時のみ有効 |
 | `--user-flash <file>` | 未指定 | 9K、フラッシュ書き込み、内蔵フラッシュ | GW1N(R)-9 のユーザーデータを `0x6D0` ページから書き込む。upstream は書き込み時にビット反転を行う。 | `gowin.cpp:155-167,297-320,647-680`、`main.cpp:1068-1069` | 公開。9K の内蔵フラッシュ書き込み時のみ有効 |
 | `--protect-flash <len>` | 0（無効） | 対象ボードでは非対応 | Gowin の該当実装は保護要求をエラーにする。 | `main.cpp:1027-1028,654-656`、`gowin.hpp:37-39` | 表示のみ。未対応の理由を示して無効化 |
+
+外付けフラッシュへのアクセスでは、Tang Nano 4K/9K の GW1N と Tang Nano 20K の GW2A のどちらも `prepare_flash_access()` が先に SRAM を消去します。GW1N は続けて設定モードへ入り、GW2A はその切り替えを行いません。読み出しと一括消去は `prepare_flash_access()` と `post_flash_access()` を通ります。後者は両系列で `reset()` を呼び、`reset()` が RELOAD/NOOP を送ります。したがって、操作中は SRAM 上のデザインが停止し、処理後にフラッシュから再ロードされます。根拠は `gowin.cpp:267-271,1176-1192,1220-1271`、`gowin.hpp:44-47`、`flashInterface.cpp:149-177` です。
 
 Tang Nano のフラッシュ容量は次のとおりです。1K は外付けフラッシュを搭載せず、パッドのみです。4K と 9K は 32 Mbit（4 MiB）、20K は 64 Mbit（8 MiB）の SPI フラッシュを搭載し、20K に内蔵フラッシュはありません。
 
