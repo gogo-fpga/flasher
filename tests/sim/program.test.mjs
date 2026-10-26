@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { resolve } from "node:path";
 
-import { parseGowinFsChecksum } from "./fs-checksum.mjs";
+import { checksumGowinEflash, parseGowinFsChecksum } from "./fs-checksum.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const runner = resolve(import.meta.dirname, "run-program.mjs");
@@ -182,15 +182,54 @@ for (const board of boards) {
           Buffer.alloc(20, 0xff),
           parseFsPayload(board.board),
         ]);
-        assert.deepEqual(
-          Buffer.from(result.eflash, "base64").subarray(0, expected.length),
-          expected,
+        const eflash = Buffer.from(result.eflash, "base64");
+        assert.deepEqual(eflash.subarray(0, expected.length), expected);
+        const eflashMap = new Map(
+          Array.from(eflash, (byte, address) => [address, byte]),
+        );
+        assert.equal(result.usercode, checksumGowinEflash(eflashMap));
+        assert.equal(
+          result.usercode,
+          parseGowinFsChecksum(readFileSync(fixture, "ascii")),
         );
       }
       measured("flash", variant, board.name, repeat, result);
     }
   });
 }
+
+test("corrupted internal eflash data fails the Tang Nano 1K CRC check", { timeout: 300_000 }, () => {
+  const board = boards[0];
+  const fixture = resolve(repoRoot, "build/fixtures", `${board.board}.fs`);
+  const expected = Buffer.concat([
+    Buffer.from("GW1N"),
+    Buffer.alloc(20, 0xff),
+    parseFsPayload(board.board),
+  ]);
+  const result = runProgram(
+    board,
+    ["-b", board.board, "-f", fixture],
+    { eflashCorruptWord: 23 },
+  );
+  const eflash = Buffer.from(result.eflash, "base64");
+
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(result.eflashCorruptedWord, 23);
+  assert.equal(eflash[92], expected[92] ^ 1);
+  const eflashMap = new Map(
+    Array.from(eflash, (byte, address) => [address, byte]),
+  );
+  const storedChecksum = checksumGowinEflash(eflashMap);
+  const fixtureChecksum = parseGowinFsChecksum(readFileSync(fixture, "ascii"));
+  assert.equal(result.usercode, storedChecksum);
+  assert.notEqual(storedChecksum, fixtureChecksum);
+
+  const crcResult = /CRC check\s*:\s*(PASS|FAIL)/i.exec(result.output);
+  if (process.env.CI || crcResult) {
+    assert.ok(crcResult, result.output);
+    assert.equal(crcResult[1].toUpperCase(), "FAIL");
+  }
+});
 
 test("IDCODE mismatch is rejected before programming", () => {
   const target = boards[0];

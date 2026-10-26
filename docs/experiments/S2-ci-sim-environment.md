@@ -1,6 +1,6 @@
 # S2 CI シミュレーション環境差の診断
 
-- 状態: 実施中
+- 状態: 完了
 - 日付: 2026-10-26
 - 担当: Devin
 - 関連: PR #8
@@ -75,19 +75,29 @@ CPU 競合試験は `taskset -c 0` と `yes >/dev/null` 2個を使って3回実�
 
 Fake USB trace を有効にした3ボードの flash programming は3/3件成功した。15回の子プロセス実行から、`0x15`、`0x71`、`0x3a`、`0x3c` の IR load と `0x71` の DR update、TAP reset が記録された。Python 3.12 fixture を使ったこのローカル経路では `0x0a` の IR/DR と `0x13` の IR/read は観測されなかった。1K の直接実行結果も終了コード0で、命令数に `0x0a` と `0x13` は含まれない。
 
-## CI trace と原因
+## 旧診断と訂正
 
 2026-10-26 の診断 CI では、4個の fixture hash が Python 3.12 の保存値とすべて一致した。WASM と `.mjs` の hash もローカル再現値に一致した。したがって、今回のログで観測した CRC 失敗は fixture やビルド成果物の差では説明できない。
 
-診断 CI trace では3ボードそれぞれで `0x13` の DR read が1回あり、いずれも `value=0x00000000 usercode=0x00000000` を返した。`0x0a` の IR/DR はなく、device state reset も観測されなかった。各テストはこの最初の CRC assertion で失敗して終了した。読み出し値は元のログの `Read: 0x00000000 checksum: ...` と一致する。
+最初の診断では、`0x13` の読み戻し値が0で、Fake USB の内部フラッシュ reload 状態が未実装であることを原因と考えた。この仮説は誤りだった。後続 trace で `0x3c` reload 後の usercode と `0x13` 応答 bytes が正しいと分かり、残っている応答 queue の方が不一致の原因だと判明した。
 
-原因は Fake USB の内部フラッシュ reload 状態が未実装だったこと。GW1N の `programFlash()` は `0x71` で内部フラッシュへ書き込み、`0x3c` の reload 後に CRC を検査する。`checkCRC()` が実行されると `0x13` からユーザーコードを読み取るが、Fake USB は従来、SRAM 書き込みの `0x0a` でしかユーザーコードを設定せず、`0x3c` reload では0のままだった。`skip_checksum` はクラス宣言で初期化されず、GW1N の family 検出でも設定されないため、`programFlash()` の `if (!skip_checksum && data)` による CRC 検査は実行環境の値に依存する。CI trace はその条件が成立し、`0x13` 読み出しまで到達したことを示す。ローカルで検査が観測されなかったことはこの分岐差と整合するが、CI とローカルで未初期化値そのものを観測したわけではない。
+GW1N の `Gowin::skip_checksum` はコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも設定されない。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認するため、未初期化値により CRC 検査の有無が実行環境で変わる。ローカルでは検査が省略され、CI では実行された。これは実行経路の差を説明するが、読み出し不一致の直接原因ではない。vendor code は変更していない。実機の Tang Nano では試しておらず、upstream への報告は利用者の承認を待つ。
 
-Fake USB は、fixture から openFPGALoader と同じ手順で得た checksum を内部 flash reload 時に反映するよう変更した。vendor は変更していない。checksum parser の fixture 単体テストで1K/4K/9Kの期待値を確認し、対象の3 flash tests と USB disconnect test は5/5件成功した。全 simulation suite の再実行結果は後段に記録する。
+## 根本原因と修正
 
-変更後の全シミュレーション suite は41/41件成功し、所要時間は429,458.670 ms。対象4テストは先行する絞り込み実行でも5/5件成功した。assertion と timeout、vendor code は変更していない。
+根本原因は Fake USB の MPSSE parser が、`0x8e` の1バイト長と `0x8f` の2バイト長を消費していなかったことだった。`0x8f` の長さ `0x0026` を別命令として誤解析し、実際の FT2232H が返さない読み出し bytes を queue に積んでいた。FTDI AN_108 上でも、これらの命令はデータ出力・クロック命令であり、入力 bytes を返さない。openFPGALoader の `toggleClk()` はこれらを `mpsse_store()` で送るだけで、読み戻しを要求しない。
 
-最初の trace 実装は 9K の子プロセスで `ENOBUFS` になった。DR read を `0x13` のみに絞り、`0x71` の DR update を先頭3件と8,192件ごとに記録する方式に変更した後は、3テストが通過し、ログは 1,748,834 bytes になった。生の測定値は [S2-ci-sim-environment.csv](S2-ci-sim-environment.csv) に記録した。
+修正前の `0x13` 読み出し窓には、1K で2 bytes（`0x3b` と `0x6b` 由来）、4K で636 bytes（うち631 bytes は誤解析した `0x26` 由来）、9K で1518 bytes（うち1513 bytes は同じ誤解析由来）が残っていた。修正後は3ボードすべてで読み出し開始時の queue が0となり、`0x13` 応答は usercode と一致した。
+
+| Board | usercode | `0x13` bytes |
+|---|---:|---|
+| Tang Nano 1K | `0x0000a9ee` | `ee a9 00` |
+| Tang Nano 4K | `0x00001042` | `42 10 00` |
+| Tang Nano 9K | `0x0000c5d5` | `d5 c5 00` |
+
+Fake USB は内部フラッシュに実際に保存した bytes から usercode checksum を計算する。書き込み語の1 bitを反転する fault を加え、保存済み eflash から得た checksum が入力 fixture の checksum と異なることを検査する負の対照を追加した。CI では CRC 経路に入ったとき upstream が `CRC check : FAIL` を出すことも要求する。ローカルでは `skip_checksum` の未初期化値により CRC 経路が省略されたため、テストは保存データから計算した値の不一致を検査した。正常な usercode 読み出しも、保存済み eflash 内容から値を導く決定的なテストにした。
+
+USB disconnect test は parser 修正後に421 msで成功し、以前の CI での90秒失敗は再現しなかった。disconnect 時の個別 queue trace は採取していないため、同じ parser 不具合との直接の因果は未確認である。修正前後の trace と生の値は [S2-ci-sim-environment.csv](S2-ci-sim-environment.csv) に記録した。
 
 ## 捨てた試行と経緯
 
@@ -95,11 +105,17 @@ Python 3.14 の fixture 生成は Yosys ABC9 の Wasmtime trap で停止した�
 
 ## 結論
 
-未確定。仮想 USB の結果であり、実機の動作を示すものではない。
+CI とローカルの CRC 経路の差は `Gowin::skip_checksum` の未初期化動作で説明できる。CI で発生した CRC 読み出し不一致の直接原因は Fake USB が `0x8e` と `0x8f` の長さ bytes を誤解析し、偽の読み出し bytes を先行 queue に残したことだった。parser 修正後は queue が空になり、usercode の読み出しが一致した。結果は仮想 USB に限り、実機の動作は確認していない。
 
 ## 未確認の点
 
-CI runner 上の fixture hash と Fake USB trace は、診断用 CI 実行後に比較する。Python 3.14 で生成した fixture の内容も未確認である。
+Python 3.14 の fixture 生成は Yosys ABC9 の Wasmtime trap で停止し、生成物を比較できなかった。これは未解決の環境差として残す。Tang Nano 実機での確認も未実施である。
+
+## 2026-10-26 のレビュー修正検証
+
+対象テストは7/7件、全シミュレーションは43/43件成功した。最初の全体実行では、9K の checksum が `0x59e7` となり、期待値 `0xc5d5` と一致しなかった。9K の各設定行は padding 後に4 bitずつ余るため、行ごとに byte に変換せず、行をまたいで bit を連結してから checksum words を作るよう修正した。修正後は fixture checksum と eflash 由来の usercode が一致した。所要時間と失敗・修正の記録は CSV に追記した。
+
+ローカルの負の対照では `skip_checksum` の未初期化値により upstream の CRC 出力が省略された。保存済み eflash の word 23 が反転し、その bytes から計算した usercode が入力 fixture の checksum と異なることを確認した。CI では CRC 経路に入る場合に `CRC check : FAIL` を要求する。
 
 ## ログ
 

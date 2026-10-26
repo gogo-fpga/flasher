@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createFakeUsb } from "./fake-webusb.mjs";
-import { parseGowinFsChecksum } from "./fs-checksum.mjs";
 
 const [variant, idcodeHex, argsJson, faultsJson, inputFilesJson = "{}"] =
   process.argv.slice(2);
@@ -14,10 +13,7 @@ const faults = JSON.parse(faultsJson);
 const inputFiles = JSON.parse(inputFilesJson);
 const fixtureIndex = args.findIndex((argument) => argument.endsWith(".fs"));
 const fixtureBytes = fixtureIndex === -1 ? null : readFileSync(args[fixtureIndex]);
-const flashUsercode = fixtureBytes
-  ? parseGowinFsChecksum(fixtureBytes.toString("ascii"))
-  : undefined;
-const { device, usb } = createFakeUsb(idcode, { faults, flashUsercode });
+const { device, usb } = createFakeUsb(idcode, { faults });
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   writable: true,
@@ -70,7 +66,7 @@ try {
   }
   if (process.env.FAKE_USB_TRACE === "1") {
     const queuedBytes = device.mpsseOutput;
-    const code = device.tap.flashUsercode;
+    const code = device.tap.usercode;
     const codeBytes = code === undefined ? [] : [code & 0xff, (code >>> 8) & 0xff];
     const queuedUsercodeOffset = codeBytes.length === 0
       ? -1
@@ -94,8 +90,10 @@ try {
       exitCode,
       isPromise,
       elapsedMs: performance.now() - started,
+      usercode: device.tap.usercode,
       sram: Buffer.from(device.tap.sram).toString("base64"),
       eflash: Buffer.from(eflash).toString("base64"),
+      eflashCorruptedWord: device.tap.eflashCorruptedWord,
       spiCommands: device.tap.spiCommands,
       spiCommandCounts: Object.fromEntries(device.tap.spiCommandCounts),
       instructionCounts: Object.fromEntries(device.tap.instructionCounts),

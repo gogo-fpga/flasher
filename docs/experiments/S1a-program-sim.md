@@ -74,3 +74,9 @@ fake は `vendor/openFPGALoader/src/gowin.cpp` 等の手順に沿って TAP/命�
 | Tang Nano 20K flash | 666.821, 692.068, 683.343, 661.890, 660.177 |
 
 CSV: `docs/experiments/S1a-program-sim.csv`.
+
+## 2026-10-26 の訂正
+
+当初は、内蔵フラッシュの消去中に busy が続いても、upstream が `Erase FLASH DONE` と表示して0で終了すると記録した。この測定は Fake USB の MPSSE parser が `0x8e` と `0x8f` の長さバイトを命令として誤解析していた時点のもので、busy を検出できない挙動を示す測定ではなかった。
+
+parser の修正後、upstream は消去を100回再試行し、`FAIL` を表示して終了コード0で終わることを確認した。画面は終了コードだけでなく `FAIL` も判定するため、この場合は失敗と表示する。以前の測定値と記述は当時の経緯として残す。

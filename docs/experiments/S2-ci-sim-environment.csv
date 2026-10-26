@@ -32,3 +32,15 @@ ci,trace,1,device state resets,0,events,true,no device reset observed before CRC
 ci,trace,1,diagnostic tests,3,failed,true,each first CRC assertion reads usercode zero
 local-fix,affected-sim-tests,1,pass count,5,tests,true,three flash tests USB disconnect and checksum parser
 local-fix,full-sim-suite,1,pass count,41,tests,true,duration 429458.670334 ms
+trace,mpsse-parser-before-fix,1,Tang Nano 1K queued bytes,2,bytes,true,0x3b and 0x6b response bytes
+trace,mpsse-parser-before-fix,1,Tang Nano 4K queued bytes,636,bytes,true,631 bytes attributed to false 0x26 command
+trace,mpsse-parser-before-fix,1,Tang Nano 9K queued bytes,1518,bytes,true,1513 bytes attributed to false 0x26 command
+trace,mpsse-parser-after-fix,1,Tang Nano 1K queued bytes,0,bytes,true,0x13 response matches usercode 0x0000a9ee
+trace,mpsse-parser-after-fix,1,Tang Nano 4K queued bytes,0,bytes,true,0x13 response matches usercode 0x00001042
+trace,mpsse-parser-after-fix,1,Tang Nano 9K queued bytes,0,bytes,true,0x13 response matches usercode 0x0000c5d5
+ci,mpsse-parser-fix,1,USB disconnect duration,421.364,ms,true,pass; causal queue trace was not collected
+review,checksum-refactor-first-run,1,full-sim failures,1,test,true,9K checksum was 0x59e7 instead of 0xc5d5 due to per-row bit alignment
+review,corrected-checksum-focused,1,pass count,7,tests,true,duration 84899.777769 ms
+review,corrected-checksum-full-suite,1,pass count,43,tests,true,duration 514014.683145 ms
+review,eflash-corruption,1,corrupted word index,23,word,true,stored eflash byte at address 92 had bit 0 flipped
+review,eflash-corruption-local,1,upstream CRC output,skipped,branch,true,skip_checksum undefined value skipped check; eflash-derived checksum mismatch was asserted

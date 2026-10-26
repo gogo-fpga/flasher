@@ -1,3 +1,5 @@
+import { checksumGowinEflash } from "./fs-checksum.mjs";
+
 const TAP = {
   reset: 0,
   idle: 1,
@@ -82,10 +84,10 @@ const NOR_PHASES = Object.freeze({
 });
 
 class GowinTap {
-  constructor(idcode, faults, flashUsercode) {
+  constructor(idcode, faults) {
     this.idcode = idcode >>> 0;
     this.faults = faults;
-    this.flashUsercode = flashUsercode;
+    this.eflashCorruptedWord = null;
     this.heartbeatEnabled =
       typeof process !== "undefined" && process.env?.FAKE_USB_HEARTBEAT === "1";
     this.heartbeatStartedAt = Date.now();
@@ -205,8 +207,9 @@ class GowinTap {
     if (instruction === 0x71) this.eflashExpectAddress = true;
     if (instruction === 0x3c) {
       this.status |= 1 << 13;
-      if (this.eflash.size > 0 && this.flashUsercode !== undefined) {
-        this.usercode = this.flashUsercode;
+      if (this.eflash.size > 0) {
+        const usercode = checksumGowinEflash(this.eflash);
+        if (usercode !== undefined) this.usercode = usercode;
         traceFakeUsb(
           `usercode-set kind=internal-flash-reload value=${traceHex(this.usercode)}`,
         );
@@ -470,6 +473,14 @@ class GowinTap {
         for (let offset = 0; offset < bytes.length; offset += 4) {
           const word = bytes.slice(offset, offset + 4);
           word.reverse();
+          const wordAddress = this.eflashAddress;
+          if (
+            this.eflashCorruptedWord === null
+            && this.faults.eflashCorruptWord === Math.floor(wordAddress / 4)
+          ) {
+            word[0] ^= 1;
+            this.eflashCorruptedWord = Math.floor(wordAddress / 4);
+          }
           for (const byte of word) this.eflash.set(this.eflashAddress++, byte);
         }
       }
@@ -584,7 +595,7 @@ function stringDescriptor(value) {
 }
 
 class FakeUSBDevice {
-  constructor(idcode, faults, flashUsercode) {
+  constructor(idcode, faults) {
     this.vendorId = 0x0403;
     this.productId = 0x6010;
     this.manufacturerName = "Sipeed";
@@ -592,7 +603,7 @@ class FakeUSBDevice {
     this.serialNumber = "TN-S0-0001";
     this.opened = false;
     this.interfaceClaims = new Set();
-    this.tap = new GowinTap(idcode, faults, flashUsercode);
+    this.tap = new GowinTap(idcode, faults);
     this.traceUsercodeReadPending = false;
     this.mpsseOutputOrigins = [];
     this.lastTransferInTrace = null;
@@ -955,9 +966,9 @@ export function packMpsseBitModeRead(bits, lsbFirst = true) {
 
 export function createFakeUsb(
   idcode,
-  { connected = true, faults = {}, flashUsercode } = {},
+  { connected = true, faults = {} } = {},
 ) {
-  const device = new FakeUSBDevice(idcode, faults, flashUsercode);
+  const device = new FakeUSBDevice(idcode, faults);
   return {
     device,
     usb: {
