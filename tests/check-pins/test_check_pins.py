@@ -166,5 +166,38 @@ class CheckPinsTests(unittest.TestCase):
         self.assertEqual("listed", labels["ubuntu-24.04"])
 
 
+    def test_needs_update_is_false_when_all_rows_are_latest(self):
+        rows = [
+            ("openFPGALoader", "v1.2.0", "v1.2.0", "最新"),
+            ("libusb", "v1.0.30", "v1.0.30", "最新"),
+        ]
+        self.assertFalse(check_pins.needs_update(rows))
+
+    def test_needs_update_is_true_when_a_row_has_an_update(self):
+        rows = [("Node.js Active LTS", "22", "v24.22.1", "更新あり")]
+        self.assertTrue(check_pins.needs_update(rows))
+
+    def test_needs_update_is_true_when_a_row_needs_confirmation(self):
+        rows = [("actionlint", "1.7.12", "取得できません", "要確認")]
+        self.assertTrue(check_pins.needs_update(rows))
+
+    def test_parse_upstream_report_table_format(self):
+        report = (
+            "| 依存 | 固定値 | 最新 | 状態 |\n"
+            "|---|---|---|---|\n"
+            "| openFPGALoader | v1.2.0 | v1.2.0 | 最新 |\n"
+            "| libusb | v1.0.30 | v1.0.30 | 最新 |\n"
+        )
+        rows = check_pins.parse_report_rows(report)
+        self.assertEqual(
+            [
+                ("openFPGALoader", "v1.2.0", "v1.2.0", "最新"),
+                ("libusb", "v1.0.30", "v1.0.30", "最新"),
+            ],
+            rows,
+        )
+        self.assertFalse(check_pins.needs_update(rows))
+
+
 if __name__ == "__main__":
     unittest.main()

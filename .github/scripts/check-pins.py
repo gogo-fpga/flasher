@@ -373,12 +373,53 @@ def upstream_report(root: Path = ROOT) -> str:
     return "\n".join(lines) + "\n"
 
 
+def parse_report_rows(report: str) -> list[tuple[str, str, str, str]]:
+    lines = report.splitlines()
+    header = ["依存", "固定値", "最新", "状態"]
+    header_index = None
+    for index, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells == header:
+            header_index = index
+            break
+    if header_index is None or header_index + 1 >= len(lines):
+        raise ValueError("固定版レポートの表ヘッダーがありません")
+
+    separator = [
+        cell.strip()
+        for cell in lines[header_index + 1].strip().strip("|").split("|")
+    ]
+    if len(separator) != len(header) or not all(
+        re.fullmatch(r":?-{3,}:?", cell) for cell in separator
+    ):
+        raise ValueError("固定版レポートの表区切りが不正です")
+
+    rows = []
+    for line in lines[header_index + 2:]:
+        if not line.lstrip().startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != len(header):
+            raise ValueError("固定版レポートの列数が不正です")
+        rows.append(tuple(cells))
+    if not rows:
+        raise ValueError("固定版レポートに依存行がありません")
+    return rows
+
+
+def needs_update(rows: Iterable[tuple[str, str, str, str]]) -> bool:
+    return any(row[3] != "最新" for row in rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("consistency", help="offline repository consistency checks")
     upstream = subparsers.add_parser("upstream", help="report upstream pin updates")
     upstream.add_argument("--report", required=True, type=Path)
+    upstream.add_argument("--github-output", type=Path)
     args = parser.parse_args()
 
     if args.command == "consistency":
@@ -393,6 +434,11 @@ def main() -> int:
     report = upstream_report()
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(report, encoding="utf-8")
+    if args.github_output is not None:
+        rows = parse_report_rows(report)
+        output_value = str(needs_update(rows)).lower()
+        args.github_output.parent.mkdir(parents=True, exist_ok=True)
+        args.github_output.write_text(f"needs_update={output_value}\n", encoding="utf-8")
     print(report, end="")
     return 0
 
