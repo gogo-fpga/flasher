@@ -21,6 +21,8 @@ description: GOGO-FPGA flasher の依存（vendor/ の submodule、emsdk、GitHu
 | fixture 用 pip | `tests/fixtures/requirements.txt` | Apycula、yowasp-yosys、yowasp-nextpnr-himbaechel-gowin の release | nextpnr の wheel が指定する Apycula の版に合わせる。合わない版にすると 20K の `.fs` が作れない |
 | GitHub Actions | workflow の `uses:` にある commit SHA と `# vX.Y.Z` | 各 action の release。後続の major も確かめ、`runs.using` の Node.js がサポート対象か調べる | full commit SHA と `# vX.Y.Z` を併記する |
 
+タグで固定した submodule（openFPGALoader、libusb、zlib、emsdk）は Dependabot の対象外です。新しい版が出たことは、「固定版の更新確認」ワークフローが Issue で知らせます。
+
 ## 更新手順
 
 1. 作業ブランチで、更新前の基準を記録します。`build-info.json` の WASM・`.mjs` の SHA-256 と大きさ（gzip 後も）、単体・仮想 USB・Playwright の件数と結果、仮想 USB での書き込み時間を残します。

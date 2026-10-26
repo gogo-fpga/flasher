@@ -51,7 +51,7 @@ scripts/build-web.sh      # dist/ にまとめる
 python3 dist/serve.py --port 8000
 ```
 
-テストの手順と確認コマンドは [AGENTS.md](AGENTS.md#9-確認コマンド) にあります。
+テストの手順と確認コマンドは [AGENTS.md](AGENTS.md#10-確認コマンド) にあります。
 
 ## 文書
 

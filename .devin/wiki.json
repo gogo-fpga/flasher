@@ -82,6 +82,15 @@
       "page_notes": [
         { "content": "RESEARCH.md の「ライセンス」と README.md を根拠にしてください。" }
       ]
+    },
+    {
+      "title": "CI と依存関係の監視",
+      "purpose": "build、lint、agent-docs、固定版の更新確認の各 workflow が検査する内容と、Dependabot が週次で確認する依存を説明する",
+      "page_notes": [
+        {
+          "content": ".github/workflows/build.yml は WASM と Web のビルド、単体・仮想 USB・Playwright テストを実行します。.github/workflows/lint.yml は workflow、shell、依存 pin、zizmor を検査します。.github/workflows/agent-docs.yml は文書とスキルリンクを検査します。.github/workflows/pins-check.yml は固定版の更新を確認して Issue に知らせます。.github/dependabot.yml は branch を追う submodule、GitHub Actions、npm、pip を週次で確認します。"
+        }
+      ]
     }
   ]
 }

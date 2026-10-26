@@ -39,7 +39,13 @@ Devin / Codex / Claude Code など、このリポジトリで作業するすべ�
 - 依存を追加・更新するときは「vendor-update」スキルに従います。
 - 上流への Issue・PR・push・コメントは、人間の承認を得てから行います。
 
-## 6. エージェントスキル
+## 6. 依存関係の管理
+
+`.github/dependabot.yml` で、branch を追う submodule（libftdi、yomiyasu）、GitHub Actions、npm、pip を週次で監視しています。タグで固定した submodule（openFPGALoader、libusb、zlib、emsdk）、Node.js、actionlint、runner は「固定版の更新確認」ワークフローが週次で調べ、Issue で知らせます。依存を追加したら、同じ変更で監視の対象に加えます。
+
+Dependabot の PR を含むすべての更新で「vendor-update」スキルの変更履歴の確認と回帰テストを行います。マージは人間が行います。
+
+## 7. エージェントスキル
 
 - リポジトリ固有のスキルは `.agents/skills/<name>/` に置きます。vendor 内のスキルはコピーせず、`.agents/skills/<name>` からのシンボリックリンクにします。
 - Claude Code は `.claude/skills/` しか読まないため、`.claude/skills/<name>` → `../../.agents/skills/<name>` のリンクも必ず作ります。スキルを追加・改名・削除したら、リンクも同じ PR で直します。CI の `agent-docs` ワークフローがリンクの解決を検査します。Windows で clone するときは、シンボリックリンクを有効にします（`git config core.symlinks true` と、開発者モードか管理者権限）。
@@ -53,7 +59,7 @@ Devin / Codex / Claude Code など、このリポジトリで作業するすべ�
 | `experiment-record` | 実験・測定・比較の計画、実行、再現できる記録 |
 | `fake-usb` | 仮想の FT2232・GOWIN TAP・NOR フラッシュの拡張と、負の対照 |
 
-## 7. yomiyasu（日本語推敲スキル）
+## 8. yomiyasu（日本語推敲スキル）
 
 `vendor/yomiyasu` にある、AI が生成した日本語を読みやすく整えるスキルです。意味と条件を保ったまま、不自然な比喩、曖昧な主述関係、不要な装飾を直します。
 
@@ -63,7 +69,7 @@ Devin / Codex / Claude Code など、このリポジトリで作業するすべ�
   - `python3 .agents/skills/yomiyasu/scripts/yomiyasu_check.py run --source <原文> --final <最終稿>`: 推敲の前後を比べ、数値・否定・主述が変わっていないかを確かめます。記録は git 最上位の `.yomiyasu/` に残ります（gitignore 済み）。
 - 自動フックの `yomiyasu_hook.py` は各開発者の個人設定でだけ有効にし、リポジトリにはコミットしません。
 
-## 8. 作業の進め方
+## 9. 作業の進め方
 
 - 自明でない作業は、調査して深い計画を立ててから着手します。計画はリポジトリにコミットせず、チャットで共有します。
 - 調査の結果は `RESEARCH.md` に、実験・測定・比較は「experiment-record」スキルに従って `docs/experiments/` に残します。結果を PR 本文だけに書きません。
@@ -72,7 +78,7 @@ Devin / Codex / Claude Code など、このリポジトリで作業するすべ�
 - 変更は小さく、主題ごとにまとめます。
 - 検証は、push する commit と同じ状態で行います。手元だけの変更を含む状態での成功は、push した commit の確認になりません。
 
-## 9. 確認コマンド
+## 10. 確認コマンド
 
 ```sh
 git submodule update --init --depth 1    # submodule の取得
@@ -88,6 +94,12 @@ python3 dist/serve.py --port 8000        # COOP/COEP 付きでローカル配信
 shellcheck scripts/*.sh tests/fixtures/*.sh tests/check-*/run.sh
 python3 .github/scripts/check-jisx0213.py
 python3 .github/scripts/check-links.py
+actionlint .github/workflows/*.yml
+python3 .github/scripts/check-pins.py consistency
+sh tests/check-pins/run.sh
+python3 -m venv "$HOME/.cache/flasher-zizmor"
+"$HOME/.cache/flasher-zizmor/bin/pip" install --require-hashes -r .github/zizmor-requirements.txt
+"$HOME/.cache/flasher-zizmor/bin/zizmor" --offline --format=github .github/workflows/
 python3 .agents/skills/yomiyasu/scripts/yomiyasu_lint.py <file>
 git diff --check
 ```
