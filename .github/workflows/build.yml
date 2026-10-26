@@ -1,0 +1,119 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Autotools をインストール
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool
+          autoconf --version | head -n 1
+          automake --version | head -n 1
+          libtoolize --version | head -n 1
+
+      - name: Node.js を設定
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: npm 依存を取得
+        run: npm ci
+
+      - name: Chromium をインストール
+        run: npx playwright install --with-deps chromium
+
+      - name: emsdk のタグを取得
+        run: git -C vendor/emsdk fetch --depth=1 --tags origin
+
+      - name: WASM をビルド
+        run: scripts/build-wasm.sh
+
+      - name: Web アプリを組み立て
+        run: scripts/build-web.sh
+
+      - name: 成果物の SHA-256 を記録
+        run: sha256sum build/jspi-pthread/*.wasm build/jspi-pthread/*.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: テスト用ビットストリームを生成
+        run: tests/fixtures/build-fs.sh
+
+      - name: fixture の SHA-256 を記録
+        run: sha256sum build/fixtures/*.fs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Web 単体テスト
+        run: node --test tests/web/*.test.mjs
+
+      - name: 仮想 USB シミュレーション
+        run: WASM_BUILD_ROOT=build node --test --test-concurrency=1 tests/sim/*.test.mjs
+
+      - name: Playwright E2E
+        run: npx playwright test
+
+      - name: Web 成果物を保存
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flasher-web-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+
+      - name: E2E 失敗資料を保存
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flasher-web-test-failures-${{ github.sha }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: ステップ時間を集計
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_JOB_NAME: build
+        run: |
+          # shellcheck disable=SC2016
+          step_lines="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" --paginate --jq '
+            .jobs[] | select(.name == env.BUILD_JOB_NAME) as $job |
+            "=job-started=\($job.started_at)",
+            ($job.steps[] | select(.completed_at != null) |
+              "=step=\t\(.number)\t\(.name)\t\(if .started_at == null then "unknown" else ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)) end)\t\(.conclusion)")
+          ' 2>/dev/null)" || step_lines=""
+          if [[ -n "$step_lines" ]]; then
+            {
+              printf '| # | Step | Seconds | Conclusion |\n|---:|---|---:|---|\n'
+              printf '%s\n' "$step_lines" | awk -F '\t' '$1 == "=step=" { printf "| %s | %s | %s | %s |\n", $2, $3, $4, $5 }'
+              job_started=$(printf '%s\n' "$step_lines" | sed -n 's/^=job-started=//p' | head -n 1)
+              if [[ -n "$job_started" ]]; then
+                total_seconds=$(( $(date +%s) - $(date -d "$job_started" +%s) ))
+                printf '| - | Total job to summary | %s | - |\n' "$total_seconds"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Step timings unavailable (GitHub API request failed)." >> "$GITHUB_STEP_SUMMARY"
+          fi

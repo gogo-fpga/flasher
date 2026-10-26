@@ -11,6 +11,8 @@ const idcode = Number.parseInt(idcodeHex, 16);
 const args = JSON.parse(argsJson);
 const faults = JSON.parse(faultsJson);
 const inputFiles = JSON.parse(inputFilesJson);
+const fixtureIndex = args.findIndex((argument) => argument.endsWith(".fs"));
+const fixtureBytes = fixtureIndex === -1 ? null : readFileSync(args[fixtureIndex]);
 const { device, usb } = createFakeUsb(idcode, { faults });
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
@@ -27,9 +29,8 @@ try {
   for (const [path, bytes] of Object.entries(inputFiles)) {
     module.FS.writeFile(path, Uint8Array.from(bytes));
   }
-  const fixtureIndex = args.findIndex((argument) => argument.endsWith(".fs"));
   if (fixtureIndex !== -1) {
-    module.FS.writeFile("/fixture.fs", readFileSync(args[fixtureIndex]));
+    module.FS.writeFile("/fixture.fs", fixtureBytes);
     args[fixtureIndex] = "/fixture.fs";
   }
   const callMainResult = module.callMain(args);
@@ -63,13 +64,36 @@ try {
   } catch {
     dump = null;
   }
+  if (process.env.FAKE_USB_TRACE === "1") {
+    const queuedBytes = device.mpsseOutput;
+    const code = device.tap.usercode;
+    const codeBytes = code === undefined ? [] : [code & 0xff, (code >>> 8) & 0xff];
+    const queuedUsercodeOffset = codeBytes.length === 0
+      ? -1
+      : queuedBytes.findIndex((byte, index) =>
+        byte === codeBytes[0] && queuedBytes[index + 1] === codeBytes[1]
+      );
+    const queuedHead = queuedBytes
+      .slice(0, 8)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const queuedTail = queuedBytes
+      .slice(-8)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    process.stderr.write(
+      `FAKE_USB_TRACE final-usb-input pending=${device.traceUsercodeReadPending ? 1 : 0} queued=${queuedBytes.length} usercode-offset=${queuedUsercodeOffset} head=${queuedHead} tail=${queuedTail}\n`,
+    );
+  }
   process.stderr.write(
     `\n__PROGRAM_RESULT__${JSON.stringify({
       exitCode,
       isPromise,
       elapsedMs: performance.now() - started,
+      usercode: device.tap.usercode,
       sram: Buffer.from(device.tap.sram).toString("base64"),
       eflash: Buffer.from(eflash).toString("base64"),
+      eflashCorruptedWord: device.tap.eflashCorruptedWord,
       spiCommands: device.tap.spiCommands,
       spiCommandCounts: Object.fromEntries(device.tap.spiCommandCounts),
       instructionCounts: Object.fromEntries(device.tap.instructionCounts),

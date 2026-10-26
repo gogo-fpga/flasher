@@ -6,6 +6,8 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { resolve } from "node:path";
 
+import { checksumGowinEflash, parseGowinFsChecksum } from "./fs-checksum.mjs";
+
 const repoRoot = resolve(import.meta.dirname, "../..");
 const runner = resolve(import.meta.dirname, "run-program.mjs");
 const buildRoot = resolve(process.env.WASM_BUILD_ROOT ?? "build");
@@ -42,6 +44,15 @@ function parseFsPayload(board, reverseByte = false) {
   return Buffer.from(bytes);
 }
 
+test("Gowin fixture checksums match the expected configuration checksums", () => {
+  const checksums = ["tangnano1k", "tangnano4k", "tangnano9k"].map((board) =>
+    parseGowinFsChecksum(
+      readFileSync(resolve(repoRoot, "build/fixtures", `${board}.fs`), "ascii"),
+    ),
+  );
+  assert.deepEqual(checksums, [0xa9ee, 0x1042, 0xc5d5]);
+});
+
 function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {}) {
   const childEnv = { ...process.env };
   delete childEnv.NODE_TEST_CONTEXT;
@@ -72,6 +83,17 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
       },
     );
     const wallElapsedMs = performance.now() - started;
+    let childStderr = child.stderr ?? "";
+    if (process.env.FAKE_USB_TRACE === "1") {
+      const traceLines = `${child.stdout ?? ""}\n${child.stderr ?? ""}`
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("FAKE_USB_TRACE"));
+      if (traceLines.length > 0) process.stderr.write(`${traceLines.join("\n")}\n`);
+      childStderr = childStderr
+        .split(/\r?\n/)
+        .filter((line) => !line.startsWith("FAKE_USB_TRACE"))
+        .join("\n");
+    }
     if (child.error?.code === "ETIMEDOUT") {
       return {
         exitCode: child.status ?? 1,
@@ -79,7 +101,7 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
         timeoutCode: child.error.code,
         elapsedMs: wallElapsedMs,
         elapsedSource: "wall-timeout",
-        output: `${child.stdout}\n${child.stderr}`,
+        output: `${child.stdout}\n${childStderr}`,
       };
     }
     if (child.error) {
@@ -99,7 +121,7 @@ function runProgram(board, args, faults = {}, timeout = 90_000, inputFiles = {})
       ...result,
       wallElapsedMs,
       elapsedSource: "program",
-      output: `${child.stdout}\n${child.stderr.replace(marker[0], "\n")}`,
+      output: `${child.stdout}\n${childStderr.replace(marker[0], "\n")}`,
     };
   } finally {
     rmSync(norResultPath, { force: true });
@@ -160,15 +182,52 @@ for (const board of boards) {
           Buffer.alloc(20, 0xff),
           parseFsPayload(board.board),
         ]);
-        assert.deepEqual(
-          Buffer.from(result.eflash, "base64").subarray(0, expected.length),
-          expected,
+        const eflash = Buffer.from(result.eflash, "base64");
+        assert.deepEqual(eflash.subarray(0, expected.length), expected);
+        const eflashMap = new Map(
+          Array.from(eflash, (byte, address) => [address, byte]),
+        );
+        assert.equal(result.usercode, checksumGowinEflash(eflashMap));
+        assert.equal(
+          result.usercode,
+          parseGowinFsChecksum(readFileSync(fixture, "ascii")),
         );
       }
       measured("flash", variant, board.name, repeat, result);
     }
   });
 }
+
+test("corrupted internal eflash data fails the Tang Nano 1K CRC check", { timeout: 300_000 }, () => {
+  const board = boards[0];
+  const fixture = resolve(repoRoot, "build/fixtures", `${board.board}.fs`);
+  const expected = Buffer.concat([
+    Buffer.from("GW1N"),
+    Buffer.alloc(20, 0xff),
+    parseFsPayload(board.board),
+  ]);
+  const result = runProgram(
+    board,
+    ["-b", board.board, "-f", fixture],
+    { eflashCorruptWord: 23 },
+  );
+  const eflash = Buffer.from(result.eflash, "base64");
+
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(result.eflashCorruptedWord, 23);
+  assert.equal(eflash[92], expected[92] ^ 1);
+  const eflashMap = new Map(
+    Array.from(eflash, (byte, address) => [address, byte]),
+  );
+  const storedChecksum = checksumGowinEflash(eflashMap);
+  const fixtureChecksum = parseGowinFsChecksum(readFileSync(fixture, "ascii"));
+  assert.equal(result.usercode, storedChecksum);
+  assert.notEqual(storedChecksum, fixtureChecksum);
+
+  const crcResult = /CRC check\s*:\s*(PASS|FAIL)/i.exec(result.output);
+  // Upstream leaves skip_checksum uninitialized for GW1N, so the CRC line may be absent.
+  if (crcResult) assert.equal(crcResult[1].toUpperCase(), "FAIL");
+});
 
 test("IDCODE mismatch is rejected before programming", () => {
   const target = boards[0];
@@ -206,18 +265,19 @@ test("DONE-never-set follows upstream's printed-failure/zero-exit behavior", { t
   assert.match(result.output, /FAIL/);
 });
 
-test("internal eflash busy remains unnoticed by upstream", { timeout: 120_000 }, () => {
+test("internal eflash busy reaches upstream's retry limit", { timeout: 120_000 }, () => {
   const board = boards[0];
   const result = runProgram(
     board,
     ["-b", board.board, "-f", resolve(repoRoot, "build/fixtures", `${board.board}.fs`)],
     { eflashBusyForever: true },
   );
-  assert.equal(result.instructionCounts[0x75], 1);
+  assert.equal(result.instructionCounts[0x75], 100);
   assert.ok(result.statusReads.some((status) => status & (1 << 13)));
-  // The fake keeps DONE_FINAL set, but upstream still reports Erase FLASH DONE and exits zero.
+  // Upstream retries 100 times, reports FAIL, and still exits zero.
   assert.equal(result.exitCode, 0, result.output);
-  assert.match(result.output, /Erase FLASH .*DONE/);
+  assert.match(result.output, /Erase FLASH/);
+  assert.match(result.output, /FAIL/);
 });
 
 test("NOR erase busy remains bounded by the subprocess timeout", { timeout: 60_000 }, () => {

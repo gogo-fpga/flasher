@@ -1,3 +1,5 @@
+import { checksumGowinEflash } from "./fs-checksum.mjs";
+
 const TAP = {
   reset: 0,
   idle: 1,
@@ -36,6 +38,37 @@ const TRANSITIONS = [
   [TAP.idle, TAP.selectDr],
 ];
 
+const TRACE_ENABLED = globalThis.process?.env?.FAKE_USB_TRACE === "1";
+const TRACE_INSTRUCTIONS = new Set([0x0a, 0x13, 0x15, 0x3c, 0x71, 0x3a]);
+const TRACE_COUNTS = new Map();
+const FTDI_MAX_PACKET_SIZE = 512;
+const FTDI_STATUS_SIZE = 2;
+
+function traceHex(value, width = 8) {
+  return `0x${(value >>> 0).toString(16).padStart(width, "0")}`;
+}
+
+function traceFakeUsb(message) {
+  if (TRACE_ENABLED) process.stderr.write(`FAKE_USB_TRACE ${message}\n`);
+}
+
+function traceFakeUsbEvent(key, message, first = Infinity, interval = 1) {
+  if (!TRACE_ENABLED) return;
+  const count = (TRACE_COUNTS.get(key) ?? 0) + 1;
+  TRACE_COUNTS.set(key, count);
+  if (count <= first || (interval > 0 && count % interval === 0)) {
+    traceFakeUsb(message);
+  }
+}
+
+if (TRACE_ENABLED) {
+  process.on("exit", () => {
+    for (const [event, count] of TRACE_COUNTS) {
+      process.stderr.write(`FAKE_USB_TRACE summary event=${event} count=${count}\n`);
+    }
+  });
+}
+
 const NOR_PHASES = Object.freeze({
   0x01: "nor-write-status",
   0x02: "nor-page-program",
@@ -54,6 +87,7 @@ class GowinTap {
   constructor(idcode, faults) {
     this.idcode = idcode >>> 0;
     this.faults = faults;
+    this.eflashCorruptedWord = null;
     this.heartbeatEnabled =
       typeof process !== "undefined" && process.env?.FAKE_USB_HEARTBEAT === "1";
     this.heartbeatStartedAt = Date.now();
@@ -106,6 +140,8 @@ class GowinTap {
   }
 
   reset() {
+    const previousInstruction = this.instruction;
+    const previousUsercode = this.usercode;
     this.state = TAP.reset;
     this.instruction = 0x11;
     this.irShift = 0x01;
@@ -113,6 +149,7 @@ class GowinTap {
     this.status = (1 << 12) | (1 << 13) | (1 << 15) | (1 << 16);
     this.eflashErasePending = false;
     this.usercode = 0;
+    this.traceUsercodeReadWindow = false;
     this.drInputBits = [];
     this.configEnabled = false;
     this.bscanPins = this.spiPins.select;
@@ -125,10 +162,21 @@ class GowinTap {
     this.spiOutputBits = [];
     this.spiOutputIndex = 0;
     this.spiPrepared = false;
+    if (previousInstruction !== undefined || previousUsercode !== undefined) {
+      traceFakeUsb(
+        `state-reset kind=device instruction=${previousInstruction === undefined ? "none" : traceHex(previousInstruction, 2)} usercode=${previousUsercode === undefined ? "none" : traceHex(previousUsercode)} next_usercode=${traceHex(this.usercode)}`,
+      );
+    }
   }
 
   setInstruction(instruction) {
     this.instruction = instruction & 0xff;
+    if (TRACE_INSTRUCTIONS.has(this.instruction)) {
+      traceFakeUsbEvent(
+        `ir-load-${traceHex(this.instruction, 2)}`,
+        `ir-load instruction=${traceHex(this.instruction, 2)} phase=${this.phase ?? "none"} usercode=${traceHex(this.usercode)} status=${traceHex(this.status)}`,
+      );
+    }
     if (instruction === 0x15) this.phase = "config-enable";
     else if (instruction === 0x3d) this.phase = "bscan-spi";
     else if (instruction === 0x16) this.phase = "jtag-spi";
@@ -157,7 +205,17 @@ class GowinTap {
       this.eflash.clear();
     }
     if (instruction === 0x71) this.eflashExpectAddress = true;
-    if (instruction === 0x3c) this.status |= 1 << 13;
+    if (instruction === 0x3c) {
+      this.status |= 1 << 13;
+      if (this.eflash.size > 0) {
+        const usercode = checksumGowinEflash(this.eflash);
+        if (usercode !== undefined) this.usercode = usercode;
+        traceFakeUsb(
+          `usercode-set kind=internal-flash-reload value=${traceHex(this.usercode)}`,
+        );
+      }
+      this.traceUsercodeReadWindow = true;
+    }
   }
 
   registerValue() {
@@ -386,6 +444,14 @@ class GowinTap {
 
   updateDataRegister() {
     const bytes = this.shiftedBytes();
+    if (TRACE_INSTRUCTIONS.has(this.instruction)) {
+      const data = Array.from(bytes.subarray(0, 8), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      const key = `dr-update-${traceHex(this.instruction, 2)}`;
+      const message = `dr-update instruction=${traceHex(this.instruction, 2)} bits=${this.drInputBits.length} bytes=${bytes.length} data=${data || "-"} usercode=${traceHex(this.usercode)}`;
+      traceFakeUsbEvent(key, message, this.instruction === 0x71 ? 3 : Infinity, this.instruction === 0x71 ? 8192 : 1);
+    }
     if (this.instruction === 0x17) {
       for (let offset = 0; offset < bytes.length; offset += 8192) {
         this.sram.push(...bytes.subarray(offset, offset + 8192));
@@ -393,6 +459,9 @@ class GowinTap {
     } else if (this.instruction === 0x0a) {
       this.usercode = (bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8)
         | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24);
+      traceFakeUsb(
+        `usercode-set instruction=0x0a value=${traceHex(this.usercode)}`,
+      );
     } else if (this.instruction === 0x08 && !this.faults.doneNever) {
       this.status |= 1 << 13;
     } else if (this.instruction === 0x71) {
@@ -404,6 +473,14 @@ class GowinTap {
         for (let offset = 0; offset < bytes.length; offset += 4) {
           const word = bytes.slice(offset, offset + 4);
           word.reverse();
+          const wordAddress = this.eflashAddress;
+          if (
+            this.eflashCorruptedWord === null
+            && this.faults.eflashCorruptWord === Math.floor(wordAddress / 4)
+          ) {
+            word[0] ^= 1;
+            this.eflashCorruptedWord = Math.floor(wordAddress / 4);
+          }
           for (const byte of word) this.eflash.set(this.eflashAddress++, byte);
         }
       }
@@ -434,6 +511,9 @@ class GowinTap {
         tdo = this.drShift & 1;
         this.drShift = (this.drShift >>> 1) | ((tdi & 1) << 31);
       }
+      if (this.instruction === 0x13 && this.drReadBits) {
+        this.drReadBits.push(tdo);
+      }
       if ([0x16, 0x17, 0x0a, 0x08, 0x71, 0x3d].includes(this.instruction)) {
         this.drInputBits.push(tdi & 1);
       }
@@ -449,6 +529,13 @@ class GowinTap {
     }
     if (next === TAP.captureDr) {
       this.drShift = this.registerValue();
+      if (this.instruction === 0x13) {
+        this.drReadBits = [];
+        traceFakeUsbEvent(
+          `dr-read-${traceHex(this.instruction, 2)}`,
+          `dr-read instruction=${traceHex(this.instruction, 2)} value=${traceHex(this.drShift)} usercode=${traceHex(this.usercode)}`,
+        );
+      }
       this.drInputBits = [];
       this.spiPrepared = false;
     } else if (next === TAP.captureIr) {
@@ -458,7 +545,27 @@ class GowinTap {
     } else if (next === TAP.updateIr) {
       this.setInstruction(this.irShift);
     } else if (next === TAP.reset) {
+      if (this.state !== TAP.reset) {
+        traceFakeUsb(
+          `state-reset kind=tap instruction=${traceHex(this.instruction, 2)} usercode=${traceHex(this.usercode)} status=${traceHex(this.status)}`,
+        );
+      }
       this.instruction = 0x11;
+    }
+    if (
+      this.state === TAP.shiftDr
+      && next !== TAP.shiftDr
+      && this.instruction === 0x13
+      && this.drReadBits
+    ) {
+      const value = this.drReadBits.reduce(
+        (result, bit, index) => result + (bit ? 2 ** index : 0),
+        0,
+      );
+      traceFakeUsb(
+        `dr-read-shift instruction=0x13 bits=${this.drReadBits.join("")} value=${traceHex(value)}`,
+      );
+      this.drReadBits = null;
     }
     this.state = next;
     return tdo;
@@ -497,6 +604,9 @@ class FakeUSBDevice {
     this.opened = false;
     this.interfaceClaims = new Set();
     this.tap = new GowinTap(idcode, faults);
+    this.traceUsercodeReadPending = false;
+    this.mpsseOutputOrigins = [];
+    this.lastTransferInTrace = null;
     this.faults = faults;
     this.mpsseInput = [];
     this.mpsseOutput = [];
@@ -547,6 +657,60 @@ class FakeUSBDevice {
     this.tap.reset();
     this.mpsseInput = [];
     this.mpsseOutput = [];
+    this.mpsseOutputOrigins = [];
+    this.lastTransferInTrace = null;
+  }
+
+  enqueueMpsseOutput(opcode, bytes) {
+    const output = Array.from(bytes);
+    if (output.length === 0) return;
+    this.mpsseOutput.push(...output);
+    if (!TRACE_ENABLED) return;
+
+    const lastOrigin = this.mpsseOutputOrigins.at(-1);
+    if (lastOrigin?.opcode === opcode) {
+      lastOrigin.bytes += output.length;
+    } else {
+      this.mpsseOutputOrigins.push({ opcode, bytes: output.length });
+    }
+    if (this.tap.traceUsercodeReadWindow) {
+      traceFakeUsb(
+        `mpsse-enqueue opcode=${traceHex(opcode, 2)} bytes=${output.length} queued=${this.mpsseOutput.length}`,
+      );
+    }
+  }
+
+  consumeMpsseOutput(length) {
+    const output = this.mpsseOutput.splice(0, length);
+    if (!TRACE_ENABLED) return output;
+
+    let remaining = output.length;
+    while (remaining > 0 && this.mpsseOutputOrigins.length > 0) {
+      const origin = this.mpsseOutputOrigins[0];
+      const consumed = Math.min(remaining, origin.bytes);
+      origin.bytes -= consumed;
+      remaining -= consumed;
+      if (origin.bytes === 0) this.mpsseOutputOrigins.shift();
+    }
+    return output;
+  }
+
+  traceReadWindowStart() {
+    const originSummary = this.mpsseOutputOrigins
+      .map(({ opcode, bytes }) => `${traceHex(opcode, 2)}:${bytes}`)
+      .join(",");
+    traceFakeUsb(
+      `read-window-start instruction=0x3c queued=${this.mpsseOutput.length} origins=${originSummary || "-"} last-transfer-in=${this.lastTransferInTrace ?? "none"}`,
+    );
+  }
+
+  clockTap(tms, tdi) {
+    const wasInReadWindow = this.tap.traceUsercodeReadWindow;
+    const value = this.tap.clock(tms, tdi);
+    if (!wasInReadWindow && this.tap.traceUsercodeReadWindow) {
+      this.traceReadWindowStart();
+    }
+    return value;
   }
 
   async selectConfiguration(configurationValue) {
@@ -626,16 +790,42 @@ class FakeUSBDevice {
     if (![1, 3, 0x81, 0x83].includes(endpoint)) {
       return { status: "stall", data: new DataView(new ArrayBuffer(0)) };
     }
-    const maxPayload = Math.max(1, Math.min(510, length - 2));
+    const maxPayload = Math.max(
+      1,
+      Math.min(FTDI_MAX_PACKET_SIZE - FTDI_STATUS_SIZE, length - FTDI_STATUS_SIZE),
+    );
     const output = [];
     while (this.mpsseOutput.length > 0 && output.length < length) {
       output.push(0x01, 0x60);
-      const count = Math.min(maxPayload, this.mpsseOutput.length, length - output.length - 2);
+      const count = Math.min(
+        maxPayload,
+        this.mpsseOutput.length,
+        length - output.length - FTDI_STATUS_SIZE,
+      );
       if (count <= 0) break;
-      output.push(...this.mpsseOutput.splice(0, count));
+      output.push(...this.consumeMpsseOutput(count));
     }
     if (output.length === 0) output.push(0x01, 0x60);
     this.tap.maybeHeartbeat();
+    if (TRACE_ENABLED) {
+      const packetHeads = [];
+      for (let offset = 0; offset < output.length; offset += FTDI_MAX_PACKET_SIZE) {
+        packetHeads.push(
+          output
+            .slice(offset, offset + Math.min(8, FTDI_MAX_PACKET_SIZE))
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join(""),
+        );
+      }
+      const trace = `requested=${length} returned=${output.length} queued=${this.mpsseOutput.length} packet-heads=${packetHeads.join("/")}`;
+      this.lastTransferInTrace = trace;
+      if (this.tap.traceUsercodeReadWindow) {
+        traceFakeUsb(`transfer-in endpoint=${endpoint} ${trace}`);
+      }
+    }
+    if (this.traceUsercodeReadPending) {
+      this.traceUsercodeReadPending = false;
+    }
     return { status: "ok", data: descriptorView(output, length) };
   }
 
@@ -644,7 +834,7 @@ class FakeUSBDevice {
       const command = this.mpsseInput[0];
       if (command === 0xaa || command === 0xab) {
         this.mpsseInput.shift();
-        this.mpsseOutput.push(0xfa, command);
+        this.enqueueMpsseOutput(command, [0xfa, command]);
         continue;
       }
       if (command === 0x80 || command === 0x82 || command === 0x86) {
@@ -654,10 +844,20 @@ class FakeUSBDevice {
       }
       if ([0x81, 0x83].includes(command)) {
         this.mpsseInput.shift();
-        this.mpsseOutput.push(0xff);
+        this.enqueueMpsseOutput(command, [0xff]);
         continue;
       }
-      if ([0x8a, 0x8b, 0x8d, 0x8e, 0x8f, 0x97, 0x85, 0x87].includes(command)) {
+      if (command === 0x8e) {
+        if (this.mpsseInput.length < 2) return;
+        this.mpsseInput.splice(0, 2);
+        continue;
+      }
+      if (command === 0x8f) {
+        if (this.mpsseInput.length < 3) return;
+        this.mpsseInput.splice(0, 3);
+        continue;
+      }
+      if ([0x8a, 0x8b, 0x8d, 0x97, 0x85, 0x87].includes(command)) {
         this.mpsseInput.shift();
         continue;
       }
@@ -669,10 +869,17 @@ class FakeUSBDevice {
         let result = 0;
         for (let bit = 0; bit < count; bit++) {
           const tms = (bits >>> bit) & 1;
-          const tdo = this.tap.clock(tms, bits >>> 7);
+          const tdo = this.clockTap(tms, bits >>> 7);
           result |= tdo << (7 - bit);
         }
-        if (command === 0x6b) this.mpsseOutput.push(result);
+        if (command === 0x6b) {
+          this.enqueueMpsseOutput(command, [result]);
+          if (this.tap.instruction === 0x13) {
+            traceFakeUsb(
+              `mpsse-tms-read instruction=0x13 bits=${count} bytes=${result.toString(16).padStart(2, "0")}`,
+            );
+          }
+        }
         continue;
       }
 
@@ -715,7 +922,7 @@ class FakeUSBDevice {
         const byteIndex = Math.floor(bit / 8);
         const bitIndex = lsbFirst ? bit % 8 : 7 - (bit % 8);
         const tdi = hasWrite ? ((payload[byteIndex] >>> bitIndex) & 1) : 0;
-        const tdo = this.tap.clock(0, tdi);
+        const tdo = this.clockTap(0, tdi);
         if (hasRead) {
           if (bitMode) {
             bitModeReadBits.push(tdo);
@@ -728,7 +935,13 @@ class FakeUSBDevice {
       }
       if (hasRead) {
         if (bitMode) received[0] = packMpsseBitModeRead(bitModeReadBits, lsbFirst);
-        this.mpsseOutput.push(...received);
+        if (this.tap.instruction === 0x13) {
+          traceFakeUsb(
+            `mpsse-read instruction=0x13 bits=${bits} bytes=${received.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+          );
+          this.traceUsercodeReadPending = true;
+        }
+        this.enqueueMpsseOutput(command, received);
       }
     }
   }
@@ -751,7 +964,10 @@ export function packMpsseBitModeRead(bits, lsbFirst = true) {
   return packed;
 }
 
-export function createFakeUsb(idcode, { connected = true, faults = {} } = {}) {
+export function createFakeUsb(
+  idcode,
+  { connected = true, faults = {} } = {},
+) {
   const device = new FakeUSBDevice(idcode, faults);
   return {
     device,

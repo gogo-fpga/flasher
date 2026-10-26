@@ -55,6 +55,14 @@ openFPGALoader を WASM 化した既存の例です。
 - 当初、タグを文字列の順で並べたため emsdk の最新を 6.0.9 と誤りました。`git ls-remote --tags --sort=-v:refname` で版の順に並べ直し、6.0.13 に直しました。
 - libftdi の http の取得元（`http://developer.intra2net.com/git/libftdi`）は dumb http のため shallow clone ができません（`dumb http transport does not support shallow capabilities`）。smart protocol の `git://` を使います。git:// は暗号化されませんが、superproject が固定する commit の SHA で中身を確かめられます。
 
+## CI の action と監査ツール
+
+- `actions/setup-node` v7.1.0 は `mise.toml` と絶対パスの `node-version-file` に対応し、Node.js 版の検証と manifest 再取得の再試行を加えました。ESM への移行と `NODE_AUTH_TOKEN` の動作も変更しました。この workflow は Node.js major を明示し、cache、`node-version-file`、認証 token を使わないため、追加設定は不要です。action の runtime は Node.js 24 です。
+- `actions/upload-artifact` v7.0.2 は HTTP 429 の再試行と `Retry-After` の処理を改善しました。成功時の Web 成果物と失敗時の Playwright 資料の保存に使います。
+- actionlint v1.7.12 は `on.schedule.timezone`、deployment environment、`macos-26-intel` の検査に対応し、webhook event 一覧と popular-action データも更新しました。Go 1.26 対応と Windows arm64 の CI は upstream の開発環境の変更です。この workflow は timezone と deployment environment を指定せず、Ubuntu runner を使うため、新しい設定項目は不要です。
+- zizmor 1.31.0 は pre-commit、self-hosted runner、危険な trigger、cache 設定、PowerShell の監査を改善し、`image_version` trigger に対応しました。また、誤検出の精度、submodule/worktree 内の設定探索、version comment の解析、pre-commit 入力、PowerShell の信頼済み publishing 検査を修正しました。この workflow 群は pre-commit、self-hosted runner、`image_version`、`issue_comment`、PowerShell、cache を使わず、標準の action version comment を使います。1.31.1 は `dangerous-triggers` の抑制コメントが適用されない回帰を修正しました。finding の抑制は設定しません。
+- 追加した actionlint、setup-node、upload-artifact、zizmor のライセンスは MIT です。zizmor の 1.31.1 wheel に Python の追加依存はなく、`.github/zizmor-requirements.txt` は公開配布物の SHA-256 を固定します。
+
 ## Emscripten のビルドオプション
 
 ### 出典
@@ -129,11 +137,13 @@ yowasp と apicula で作った 4 ボード用の `.fs` を、仮想 USB の SRA
 | 9K 用の `.fs` を 1K に書く | IDCODE の不一致で拒否し、0 以外で終わる |
 | SRAM の書き込み後に DONE が立たない | `FAIL` を表示するが、0 で終わる |
 | 書き込み中に USB が抜ける（`NotFoundError`） | `FAIL` を表示するが、0 で終わる |
-| 内蔵フラッシュの消去が終わらない | 検出せず、0 で終わる |
+| 内蔵フラッシュの消去が終わらない | 100回再試行して `FAIL` を表示するが、0 で終わる。画面は失敗として表示する |
 | 外付けフラッシュ（20K）の読み戻しの不一致 | `--verify` で検出し、0 以外で終わる |
 | 外付けフラッシュの消去が終わらない | 240 秒待っても終わらない |
 
-終了コードだけでは成否を判定できません。画面では、ログの `FAIL` も失敗として扱い、外付けフラッシュには `--verify` を付け、全体に時間の上限を設けます。内蔵フラッシュの消去が終わらない場合は検出できないので、既知の制約とします。詳細は [段階 1a の記録](docs/experiments/S1a-program-sim.md) にあります。
+終了コードだけでは成否を判定できません。画面では、ログの `FAIL` も失敗として扱い、外付けフラッシュには `--verify` を付け、全体に時間の上限を設けます。内蔵フラッシュの busy は、Fake USB の MPSSE parser を修正する前は誤解析に隠れていました。2026年10月の修正後は、upstream が100回再試行して `FAIL` を表示し、終了コード0で終わることを確認しました。画面は `FAIL` を検出して失敗と表示します。
+
+GW1N の `Gowin::skip_checksum` は、`gowin.cpp` のコンストラクターで初期化されず、`detectFamily()` の GW1N 分岐でも値が設定されません。`writeFLASH()` の333〜336行では `!skip_checksum && data` のとき CRC を確認します。この未初期化値により、内部フラッシュ書き込み後の CRC 確認は、残っているヒープ内容によって実行されたり省略されたりします。ローカルでは確認が省略され、CI では実行されました。実機の Tang Nano では試していません。vendor code は変更せず、upstream への報告は利用者の承認を待ちます。詳細は [段階 1a の記録](docs/experiments/S1a-program-sim.md) と [段階 2 の記録](docs/experiments/S2-ci-sim-environment.md) にあります。
 
 ### 段階 1b で分かったこと（最適化オプションの比較）
 
