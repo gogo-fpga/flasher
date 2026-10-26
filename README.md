@@ -1,4 +1,4 @@
-# GOGO-FPGA flasher
+# 午後のFPGA Web Flasher
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gogo-fpga/flasher)
 

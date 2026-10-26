@@ -1,6 +1,6 @@
 ---
 name: experiment-record
-description: GOGO-FPGA flasher で実験・測定・比較（Emscripten のビルドオプションの比較、仮想 USB での書き込み時間、WASM の大きさ、依存の更新前後の比較など）を計画・実行・記録するときに使う。条件・手順・生の値・結論・失敗した試行を docs/experiments/ に残し、別の人が再実行できるようにする。
+description: 午後のFPGA Web Flasher で実験・測定・比較（Emscripten のビルドオプションの比較、仮想 USB での書き込み時間、WASM の大きさ、依存の更新前後の比較など）を計画・実行・記録するときに使う。条件・手順・生の値・結論・失敗した試行を docs/experiments/ に残し、別の人が再実行できるようにする。
 ---
 
 # experiment-record（実験の記録）

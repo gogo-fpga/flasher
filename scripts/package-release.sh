@@ -241,7 +241,7 @@ for path in submodules:
     rows.append(f"| {labels[path]} | {pinned_version} | `{sha}` |")
 
 text = [
-    f"# GOGO-FPGA flasher {version}",
+    f"# 午後のFPGA Web Flasher {version}",
     "",
     f"- Commit: `{commit}`",
     f"- emcc: `{build_info['emcc_version']}`",
