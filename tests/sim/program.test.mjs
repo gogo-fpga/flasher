@@ -228,18 +228,19 @@ test("DONE-never-set follows upstream's printed-failure/zero-exit behavior", { t
   assert.match(result.output, /FAIL/);
 });
 
-test("internal eflash busy remains unnoticed by upstream", { timeout: 120_000 }, () => {
+test("internal eflash busy reaches upstream's retry limit", { timeout: 120_000 }, () => {
   const board = boards[0];
   const result = runProgram(
     board,
     ["-b", board.board, "-f", resolve(repoRoot, "build/fixtures", `${board.board}.fs`)],
     { eflashBusyForever: true },
   );
-  assert.equal(result.instructionCounts[0x75], 1);
+  assert.equal(result.instructionCounts[0x75], 100);
   assert.ok(result.statusReads.some((status) => status & (1 << 13)));
-  // The fake keeps DONE_FINAL set, but upstream still reports Erase FLASH DONE and exits zero.
+  // Upstream retries 100 times, reports FAIL, and still exits zero.
   assert.equal(result.exitCode, 0, result.output);
-  assert.match(result.output, /Erase FLASH .*DONE/);
+  assert.match(result.output, /Erase FLASH/);
+  assert.match(result.output, /FAIL/);
 });
 
 test("NOR erase busy remains bounded by the subprocess timeout", { timeout: 60_000 }, () => {

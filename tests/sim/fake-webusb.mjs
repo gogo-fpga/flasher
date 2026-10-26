@@ -836,7 +836,17 @@ class FakeUSBDevice {
         this.enqueueMpsseOutput(command, [0xff]);
         continue;
       }
-      if ([0x8a, 0x8b, 0x8d, 0x8e, 0x8f, 0x97, 0x85, 0x87].includes(command)) {
+      if (command === 0x8e) {
+        if (this.mpsseInput.length < 2) return;
+        this.mpsseInput.splice(0, 2);
+        continue;
+      }
+      if (command === 0x8f) {
+        if (this.mpsseInput.length < 3) return;
+        this.mpsseInput.splice(0, 3);
+        continue;
+      }
+      if ([0x8a, 0x8b, 0x8d, 0x97, 0x85, 0x87].includes(command)) {
         this.mpsseInput.shift();
         continue;
       }

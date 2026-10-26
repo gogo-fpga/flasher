@@ -22,6 +22,10 @@ test("the fake returns the MPSSE checkCRC usercode read without stale bytes", as
   const { device } = createFakeUsb(0x0100681b, { flashUsercode: 0x0000a9ee, faults: {} });
   device.tap.eflash.set(0, 0xff);
 
+  await send(device, [0x8e, 0x05]);
+  await send(device, [0x8f, 0x26, 0x00]);
+  assert.deepEqual(device.mpsseOutput, []);
+
   await shiftTms(device, [0]);
   await loadInstruction(device, 0x3c);
   assert.equal(device.tap.instruction, 0x3c);
@@ -30,8 +34,8 @@ test("the fake returns the MPSSE checkCRC usercode read without stale bytes", as
   await shiftTms(device, [1, 0, 0]);
   assert.equal(device.tap.drShift, 0x0000a9ee);
 
-  await send(device, [0x2c, 0x02, 0x00]);
-  await send(device, [0x2e, 0x06]);
+  await send(device, [0x39, 0x02, 0x00, 0x00, 0x00, 0x00]);
+  await send(device, [0x3b, 0x06, 0x00]);
   await send(device, [0x6b, 0x00, 0x81]);
 
   assert.deepEqual(device.mpsseOutput, [0xee, 0xa9, 0x00, 0x00, 0x00]);
