@@ -42,6 +42,9 @@ jobs:
       - name: Chromium をインストール
         run: npx playwright install --with-deps chromium
 
+      - name: emsdk のタグを取得
+        run: git -C vendor/emsdk fetch --depth=1 --tags origin
+
       - name: WASM をビルド
         run: scripts/build-wasm.sh
 
