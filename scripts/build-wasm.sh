@@ -154,7 +154,14 @@ fi
 # shellcheck source=/dev/null
 source "$emsdk_root/emsdk_env.sh"
 
-deps_c_flags="-$opt -ffile-prefix-map=$root=/src -ffile-prefix-map=$build_root=/build -pthread"
+prefix_map_flags=(
+  "-ffile-prefix-map=$root=/src"
+  "-ffile-prefix-map=$build_root=/build"
+  "-ffile-prefix-map=$emsdk_root=/emsdk"
+)
+prefix_map_string="${prefix_map_flags[*]}"
+deps_c_flags="-$opt $prefix_map_string -pthread"
+deps_link_flags="$prefix_map_string"
 if [[ "$async_mode" == jspi ]]; then
   deps_c_flags="$deps_c_flags -fwasm-exceptions"
 else
@@ -177,6 +184,7 @@ if [[ "$simd" == 1 ]]; then
 fi
 link_flags=(
   "${link_flags[@]}"
+  "${prefix_map_flags[@]}"
   -pthread
   -lembind
   -s STRICT=1
@@ -218,6 +226,9 @@ emcmake cmake \
   -DCMAKE_INSTALL_PREFIX="$prefix" \
   -DCMAKE_C_FLAGS="$deps_c_flags" \
   -DCMAKE_CXX_FLAGS="$deps_c_flags" \
+  -DCMAKE_EXE_LINKER_FLAGS="$deps_link_flags" \
+  -DCMAKE_MODULE_LINKER_FLAGS="$deps_link_flags" \
+  -DCMAKE_SHARED_LINKER_FLAGS="$deps_link_flags" \
   -DZLIB_BUILD_EXAMPLES=OFF \
   -DZLIB_BUILD_TESTING=OFF \
   -DZLIB_BUILD_SHARED=OFF \
@@ -237,7 +248,7 @@ git -C "$root/vendor/libusb" archive HEAD | tar -x -C "$libusb_source"
   cd "$libusb_build"
   CFLAGS="$deps_c_flags" \
   CXXFLAGS="$deps_c_flags" \
-  LDFLAGS=-pthread \
+  LDFLAGS="-pthread $deps_link_flags" \
   ac_cv_host=wasm32-unknown-emscripten \
   ac_cv_func_clock_gettime=yes \
     emconfigure "$libusb_source/configure" \
@@ -259,6 +270,9 @@ emcmake cmake \
   -DCMAKE_INSTALL_LIBDIR=lib \
   -DCMAKE_C_FLAGS="$deps_c_flags" \
   -DCMAKE_CXX_FLAGS="$deps_c_flags" \
+  -DCMAKE_EXE_LINKER_FLAGS="$deps_link_flags" \
+  -DCMAKE_MODULE_LINKER_FLAGS="$deps_link_flags" \
+  -DCMAKE_SHARED_LINKER_FLAGS="$deps_link_flags" \
   -DLIBUSB_INCLUDE_DIR="$prefix/include/libusb-1.0" \
   -DLIBUSB_LIBRARIES="$prefix/lib/libusb-1.0.a" \
   -DSTATICLIBS=ON \
@@ -309,4 +323,9 @@ fi
 
 cp "$openfpgaloader_build/openFPGALoader.mjs" "$out/openFPGALoader.mjs"
 cp "$openfpgaloader_build/openFPGALoader.wasm" "$out/openFPGALoader.wasm"
+python3 "$root/scripts/build-info.py" write \
+  --root "$root" \
+  --artifacts "$out" \
+  --variant "$variant_id" \
+  --async-mode "$async_mode"
 printf 'elapsed_seconds=%s\n' "$SECONDS"

@@ -14,14 +14,13 @@
         <p class="eyebrow">GOWIN FPGA</p>
         <h1>Tang Nano Web Flasher</h1>
         <p class="intro">
-          ブラウザーから Tang Nano にビットストリームを書き込みます。
-          書き込み中は USB ケーブルを抜かないでください。
+          ブラウザーから Tang Nano にビットストリームを書き込みます。<br />書き込み中は USB ケーブルを抜かないでください。
         </p>
       </header>
 
       <section class="panel" aria-labelledby="support-heading">
         <h2 id="support-heading">ブラウザーの確認</h2>
-        <p id="support-status" role="status" aria-live="polite">確認しています。</p>
+        <p id="support-status" role="status" aria-live="polite">ブラウザーの機能を確認します。</p>
       </section>
 
       <form id="program-form" class="panel">
@@ -57,14 +56,14 @@
           フラッシュへの書き込みは既存の内容を消去します。対象のボードとファイルを確認してください。
         </p>
 
+        <h2 class="command-heading">実行するコマンド</h2>
+        <pre class="command"><code id="command-preview"></code></pre>
         <button id="program-button" type="submit" disabled>書き込む</button>
       </form>
 
       <section id="run-panel" class="panel run-panel" aria-labelledby="run-heading" hidden>
         <h2 id="run-heading">書き込み結果</h2>
         <p id="result-status" role="status" aria-live="polite"></p>
-        <h3>実行コマンド</h3>
-        <pre class="command"><code id="command-line"></code></pre>
         <label class="progress-label" for="progress-bar">進捗</label>
         <progress id="progress-bar" max="100" value="0">0%</progress>
         <h3>ログ</h3>
@@ -76,10 +75,10 @@
       <h2 id="idcode-heading">IDCODE を確認してください</h2>
       <p id="idcode-warning"></p>
       <p>対象が正しいことを確認してから続行してください。</p>
-      <form method="dialog" class="dialog-actions">
-        <button value="cancel" class="secondary">キャンセル</button>
-        <button value="continue">続行する</button>
-      </form>
+      <div class="dialog-actions">
+        <button id="idcode-cancel" type="button" class="secondary">キャンセル</button>
+        <button id="idcode-continue" type="button">続行する</button>
+      </div>
     </dialog>
   </body>
 </html>

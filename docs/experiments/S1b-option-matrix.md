@@ -139,3 +139,7 @@ winning factor はない。C=B とし、B/C の最終 gate は両方 pass、C �
 ## ログ
 
 build/gate logs は `build/s1b/` 以下にあり、repo に commit しない。再生成コマンドは上記の通り。matrix と B/C の `.mjs`/`.wasm` SHA-256 は CSV に記録した。default C の再現性 build は `build/s1b/repro-C-a/` と `build/s1b/repro-C-b/` にあり、hash と full suite の結果は本書に記録した。
+
+## 2026-10-25 追記: BUILD_ROOT 間の再現性
+
+この節の hash と測定値は当時の記録として残す。既定の `BUILD_ROOT=build` で生じた hash 差、その原因と修正、修正後に `build/` と `build/repro-check2/` で一致した hash は [S0 の追記](S0-wasm-build.md) に記録した。

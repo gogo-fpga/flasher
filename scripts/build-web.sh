@@ -16,6 +16,10 @@ for artifact in openFPGALoader.mjs openFPGALoader.wasm; do
   fi
 done
 
+python3 "$root/scripts/build-info.py" check \
+  --root "$root" \
+  --artifacts "$artifacts"
+
 if [[ ! -f "$root/web/index.html" || ! -f "$root/web/serve.py" ]]; then
   printf 'Missing web application sources under %s/web\n' "$root" >&2
   exit 1
@@ -26,5 +30,6 @@ mkdir -p "$dist"
 cp -R "$root/web/." "$dist/"
 cp "$artifacts/openFPGALoader.mjs" "$dist/openFPGALoader.mjs"
 cp "$artifacts/openFPGALoader.wasm" "$dist/openFPGALoader.wasm"
+cp "$artifacts/build-info.json" "$dist/build-info.json"
 
 printf 'Assembled web app in %s from %s\n' "$dist" "$artifacts"

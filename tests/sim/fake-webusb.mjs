@@ -134,9 +134,7 @@ class GowinTap {
       reversed = ((reversed & 0x33) << 2) | ((reversed >>> 2) & 0x33);
       reversed = ((reversed & 0x0f) << 4) | ((reversed >>> 4) & 0x0f);
       raw[index] = (raw[index] & 1) | ((reversed << 1) & 0xfe);
-      // Gowin::spi_wait reads the final status bit from the seven-bit MPSSE tail.
-      const carryOffset = input[0] === 0x05 ? 6 : 0;
-      raw[index + 1] |= (reversed >>> 7) << carryOffset;
+      raw[index + 1] |= reversed >>> 7;
     }
     this.spiOutputBits = [];
     for (const byte of raw) {
@@ -509,6 +507,11 @@ class FakeUSBDevice {
       const count = bitMode
         ? this.mpsseInput[1] + 1
         : (this.mpsseInput[1] | (this.mpsseInput[2] << 8)) + 1;
+      if (bitMode && hasRead && count > 8) {
+        throw new Error(
+          `Invalid MPSSE bit-mode count ${count} for opcode 0x${command.toString(16).padStart(2, "0")}`,
+        );
+      }
       const dataBytes = hasWrite ? (bitMode ? 1 : count) : 0;
       if (this.mpsseInput.length < headerSize + dataBytes) return;
       const payload = this.mpsseInput.slice(headerSize, headerSize + dataBytes);
@@ -524,20 +527,45 @@ class FakeUSBDevice {
         this.tap.prepareShift(inputBits, hasRead);
       }
       const received = new Array(bitMode ? 1 : count).fill(0);
+      const bitModeReadBits = bitMode && hasRead ? [] : null;
       for (let bit = 0; bit < bits; bit++) {
         const byteIndex = Math.floor(bit / 8);
         const bitIndex = lsbFirst ? bit % 8 : 7 - (bit % 8);
         const tdi = hasWrite ? ((payload[byteIndex] >>> bitIndex) & 1) : 0;
         const tdo = this.tap.clock(0, tdi);
         if (hasRead) {
-          const outputBit = bitMode ? bit : bit % 8;
-          const outputIndex = bitMode ? 7 - outputBit : (lsbFirst ? outputBit : 7 - outputBit);
-          received[byteIndex] |= tdo << outputIndex;
+          if (bitMode) {
+            bitModeReadBits.push(tdo);
+          } else {
+            const outputBit = bit % 8;
+            const outputIndex = lsbFirst ? outputBit : 7 - outputBit;
+            received[byteIndex] |= tdo << outputIndex;
+          }
         }
       }
-      if (hasRead) this.mpsseOutput.push(...received);
+      if (hasRead) {
+        if (bitMode) received[0] = packMpsseBitModeRead(bitModeReadBits, lsbFirst);
+        this.mpsseOutput.push(...received);
+      }
     }
   }
+}
+
+export function packMpsseBitModeRead(bits, lsbFirst = true) {
+  const bitCount = bits.length;
+  if (bitCount < 1 || bitCount > 8) {
+    throw new RangeError(`Invalid MPSSE bit-mode read count: ${bitCount}`);
+  }
+
+  let packed = 0;
+  for (let bit = 0; bit < bitCount; bit += 1) {
+    const outputIndex = lsbFirst ? 8 - bitCount + bit : bitCount - 1 - bit;
+    if (outputIndex < 0 || outputIndex >= 8) {
+      throw new RangeError(`Invalid MPSSE bit-mode output index: ${outputIndex}`);
+    }
+    packed |= (bits[bit] & 1) << outputIndex;
+  }
+  return packed;
 }
 
 export function createFakeUsb(idcode, { connected = true, faults = {} } = {}) {

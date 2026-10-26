@@ -203,6 +203,21 @@ test("NOR erase busy remains bounded by the subprocess timeout", { timeout: 60_0
   assert.notEqual(result.exitCode, 0, result.output);
 });
 
+test("clean Tang Nano 20K flash verification succeeds", { timeout: 60_000 }, () => {
+  const board = boards[3];
+  const expected = parseFsPayload(board.board);
+  const result = runProgram(
+    board,
+    ["-b", board.board, "-f", "--verify", resolve(repoRoot, "build/fixtures", `${board.board}.fs`)],
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.doesNotMatch(result.output, /\bFAIL\b/i);
+  assert.deepEqual(
+    Buffer.from(result.nor, "base64").subarray(0, expected.length),
+    expected,
+  );
+});
+
 test("NOR readback corruption is detected by --verify", { timeout: 60_000 }, () => {
   const board = boards[3];
   const result = runProgram(
