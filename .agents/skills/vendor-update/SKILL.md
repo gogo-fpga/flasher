@@ -1,6 +1,6 @@
 ---
 name: vendor-update
-description: GOGO-FPGA flasher の依存（vendor/ の submodule、emsdk、GitHub Actions、npm、fixture 用の pip パッケージ）を追加・更新するときと、Dependabot の PR を確かめるときに使う。変更履歴をすべて読み、採否、ライセンス、ビルドの再現性、仮想 USB と E2E の回帰を更新前後で比べる。
+description: 午後のFPGA Web Flasher の依存（vendor/ の submodule、emsdk、GitHub Actions、npm、fixture 用の pip パッケージ）を追加・更新するときと、Dependabot の PR を確かめるときに使う。変更履歴をすべて読み、採否、ライセンス、ビルドの再現性、仮想 USB と E2E の回帰を更新前後で比べる。
 ---
 
 # vendor-update（依存関係の更新）

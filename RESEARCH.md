@@ -1,4 +1,4 @@
-# GOGO-FPGA flasher 調査記録
+# 午後のFPGA Web Flasher 調査記録
 
 ## 目的と前提
 

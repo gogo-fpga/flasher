@@ -1,7 +1,7 @@
 {
   "repo_notes": [
     {
-      "content": "GOGO-FPGA flasher は、Sipeed Tang Nano 1K・4K・9K・20K（GOWIN 製 FPGA）に、Chromium 系ブラウザーの WebUSB からビットストリーム（.fs）を書き込む Web アプリです。書き込み処理は upstream の openFPGALoader v1.2.0 を変更せずに Emscripten で WASM にして使います。CLI やネイティブのバイナリーはありません。GitHub Pages にも公開していません。"
+      "content": "午後のFPGA Web Flasher は、Sipeed Tang Nano 1K・4K・9K・20K（GOWIN 製 FPGA）に、Chromium 系ブラウザーの WebUSB からビットストリーム（.fs）を書き込む Web アプリです。書き込み処理は upstream の openFPGALoader v1.2.0 を変更せずに Emscripten で WASM にして使います。CLI やネイティブのバイナリーはありません。GitHub Pages にも公開していません。"
     },
     {
       "content": "Wiki は日本語で書いてください。コード、識別子、ファイル名、コマンド、Emscripten の設定名は英語のまま記載します。リポジトリのドキュメント（README.md、RESEARCH.md、docs/）も日本語です。"
